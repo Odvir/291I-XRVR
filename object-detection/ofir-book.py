@@ -1,5 +1,13 @@
 import cv2
 import mediapipe as mp
+import time
+
+# Keep track of last detection times for categories
+last_detection_time = {}
+snapshot_counter = 0   
+
+# Set cooldown time (seconds)
+COOLDOWN_PERIOD = 60  # 60 seconds
 
 # Load the object detector
 BaseOptions = mp.tasks.BaseOptions
@@ -8,15 +16,29 @@ ObjectDetectorOptions = mp.tasks.vision.ObjectDetectorOptions
 VisionRunningMode = mp.tasks.vision.RunningMode
 # Callback function to receive results
 def print_result(result, output_image, timestamp_ms):
+    global last_detection_time
+    global snapshot_counter
+
     if result.detections:
         for detection in result.detections:
             category = detection.categories[0]
-            if category.category_name == "hand":
-                print(f"📚 Detected hand with confidence {category.score:.2f}")
-                cv2.imwrite(f"snapshot_{snapshot_counter}.png", frame)
-                print(f"Saved snapshot_{snapshot_counter}.png")
-                snapshot_counter += 1
+            label = category.category_name
+            confidence = category.score
 
+            if label == "person" and confidence > 0.5:  # Optional: confidence threshold
+                current_time = time.time()
+
+                # Check if we've seen this category recently
+                last_time = last_detection_time.get(label, 0)
+                if current_time - last_time >= COOLDOWN_PERIOD:
+                    print(f"📚 Detected BOOK with confidence {confidence:.2f}")
+                    last_detection_time[label] = current_time
+                    cv2.imwrite(f"snapshot_{snapshot_counter}.png", frame)
+                    print(f"Saved snapshot_{snapshot_counter}.png")
+                    snapshot_counter += 1
+                else:
+                    # Suppress duplicate print
+                    pass
 # Initialize object detector
 options = ObjectDetectorOptions(
     base_options=BaseOptions(model_asset_path='object-detection/efficientdet_lite0.tflite'),
@@ -31,7 +53,6 @@ detector = ObjectDetector.create_from_options(options)
 
 # Open webcam
 cap = cv2.VideoCapture(0)
-snapshot_counter = 0   
 with detector:
     while cap.isOpened():
         ret, frame = cap.read()
