@@ -11,12 +11,15 @@ def print_result(result, output_image, timestamp_ms):
     if result.detections:
         for detection in result.detections:
             category = detection.categories[0]
-            if category.category_name == "book":
-                print(f"📚 Detected BOOK with confidence {category.score:.2f}")
+            if category.category_name == "hand":
+                print(f"📚 Detected hand with confidence {category.score:.2f}")
+                cv2.imwrite(f"snapshot_{snapshot_counter}.png", frame)
+                print(f"Saved snapshot_{snapshot_counter}.png")
+                snapshot_counter += 1
 
 # Initialize object detector
 options = ObjectDetectorOptions(
-    base_options=BaseOptions(model_asset_path='efficientdet_lite0.tflite'),
+    base_options=BaseOptions(model_asset_path='object-detection/efficientdet_lite0.tflite'),
     score_threshold=0.5,
     running_mode=VisionRunningMode.LIVE_STREAM,
     result_callback=print_result  # 👈 ADD THIS LINE
@@ -28,7 +31,7 @@ detector = ObjectDetector.create_from_options(options)
 
 # Open webcam
 cap = cv2.VideoCapture(0)
-
+snapshot_counter = 0   
 with detector:
     while cap.isOpened():
         ret, frame = cap.read()
