@@ -25,7 +25,7 @@ def print_result(result, output_image, timestamp_ms):
             label = category.category_name
             confidence = category.score
 
-            if label == "person" and confidence > 0.5:  # Optional: confidence threshold
+            if label == "book" and confidence > 0.5:  # Optional: confidence threshold
                 current_time = time.time()
 
                 # Check if we've seen this category recently
