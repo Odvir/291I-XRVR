@@ -9,7 +9,7 @@ openai_api_key = os.getenv("API_KEY")
 client = OpenAI(api_key=openai_api_key)
 
 # Read the image and encode it as base64
-with open("pride_prejudice_book.png", "rb") as image_file:
+with open("snapshot_0.png", "rb") as image_file:
     base64_image = base64.b64encode(image_file.read()).decode('utf-8')
 
 # Call GPT-4o (or GPT-4 Vision) with the image
