@@ -9,15 +9,14 @@ from openai import OpenAI
 from dotenv import load_dotenv
 import os
 import base64
+import threading
 
 # Keep track of last detection times for categories
 last_detection_time = {}
 snapshot_counter = 0   
 
 # Set cooldown time (seconds)
-COOLDOWN_PERIOD = 30
-
-stopFlag = False
+COOLDOWN_PERIOD = 15
 
 # Load the object detector
 BaseOptions = mp.tasks.BaseOptions
@@ -29,7 +28,6 @@ VisionRunningMode = mp.tasks.vision.RunningMode
 def print_result(result, output_image, timestamp_ms):
     global last_detection_time
     global snapshot_counter
-    global stopFlag
 
     if result.detections:
         for detection in result.detections:
@@ -48,9 +46,9 @@ def print_result(result, output_image, timestamp_ms):
                     cv2.imwrite(f"snapshot_{snapshot_counter}.png", frame)
                     print(f"Saved snapshot_{snapshot_counter}.png")
 
-                    stopFlag = True # Break out of webcam loop
-
-                    pass_image_to_openai(f"snapshot_{snapshot_counter}.png")
+                    # Run the OpenAI request in a separate thread to avoid blocking
+                    filename = f"snapshot_{snapshot_counter}.png"
+                    threading.Thread(target=pass_image_to_openai, args=(filename,)).start()
                     snapshot_counter += 1
                     
                 else:
@@ -91,6 +89,7 @@ def pass_image_to_openai(filename):
         max_tokens=200
     )
     print(response.choices[0].message.content)
+    print("-------------------------")
 
 
 detector = ObjectDetector.create_from_options(options)
@@ -113,9 +112,6 @@ with detector:
 
         # Display the original frame
         cv2.imshow('MediaPipe Object Detection', frame)
-
-        if stopFlag:
-            break
 
         if cv2.waitKey(10) & 0xFF == 27:  # ESC key to exit
             break
