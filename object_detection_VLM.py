@@ -28,6 +28,11 @@ TEXT_DISPLAY_DURATION = 45
 # Set cooldown time (seconds)
 COOLDOWN_PERIOD = 15
 
+# Config
+RESIZE_IMAGES = False  # Set to False to disable image resizing
+RESIZED_WIDTH = 1024
+RESIZED_HEIGHT = 576
+
 # Load the object detector
 BaseOptions = mp.tasks.BaseOptions
 ObjectDetector = mp.tasks.vision.ObjectDetector
@@ -83,6 +88,12 @@ def pass_image_to_openai(filename):
     load_dotenv()
     openai_api_key = os.getenv("API_KEY")
     client = OpenAI(api_key=openai_api_key)
+
+    if RESIZE_IMAGES:
+        img = cv2.imread(filename)
+        resized = cv2.resize(img, (RESIZED_WIDTH, RESIZED_HEIGHT))
+        cv2.imwrite(filename, resized)
+        print(f"Image resized to {RESIZED_WIDTH}x{RESIZED_HEIGHT}")
 
     # Read the image and encode it as base64
     with open(filename, "rb") as image_file:
