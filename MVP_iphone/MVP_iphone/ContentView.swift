@@ -14,11 +14,13 @@ struct ARViewContainer: UIViewRepresentable {
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
 
+        // Set up AR world tracking with plane detection
         let config = ARWorldTrackingConfiguration()
         config.environmentTexturing = .automatic
         config.planeDetection = [.horizontal]
         arView.session.run(config)
 
+        // Add a tap gesture recognizer to the AR view
         let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap))
         arView.addGestureRecognizer(tapGesture)
 
@@ -27,43 +29,49 @@ struct ARViewContainer: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: ARView, context: Context) {}
-
+    
     func makeCoordinator() -> Coordinator {
         return Coordinator()
     }
 
+    // Coordinator handles AR interactions and tap gesture
     class Coordinator: NSObject {
         weak var arView: ARView?
         var lastTapTime: Date = Date(timeIntervalSince1970: 0)
         let cooldownDuration: TimeInterval = 15 // seconds
 
+        // Method to handle tap gestures on the AR view
         @objc func handleTap() {
             guard let arView = arView else { return }
 
             let now = Date()
+            // Prevent taps w/in cooldown period (15 sec)
             if now.timeIntervalSince(lastTapTime) < cooldownDuration {
-                print("⏳ Cooldown active. Please wait...")
+                print("Cooldown active. Please wait...")
                 return
             }
             lastTapTime = now
 
+            // Take snapshot of current AR view
             arView.snapshot(saveToHDR: false) { optionalImage in
                 guard let image = optionalImage else {
-                    print("❗ Snapshot failed.")
+                    print("Snapshot failed.")
                     return
                 }
 
-                print("📸 Snapshot taken.")
+                print("Snapshot taken.")
+                self.displayTextInAR("Snapshot captured.")
 
                 // Convert to base64 and send to OpenAI
                 if let base64String = self.imageToBase64(image: image) {
-                    self.sendImageToOpenAI(base64Image: base64String)
+                    self.sendImageToOpenAI(base64Image: base64String) // Encode image, send to OpenAI
                 } else {
                     print("Failed to encode image.")
                 }
             }
         }
 
+        // Convert image to base64 string
         func imageToBase64(image: UIImage) -> String? {
             guard let imageData = image.jpegData(compressionQuality: 0.8) else { return nil }
             return imageData.base64EncodedString()
@@ -74,7 +82,8 @@ struct ARViewContainer: UIViewRepresentable {
                 print("API_KEY not found in environment variables.")
                 return
             }
-
+            
+            // OpenAI API request
             let url = URL(string: "https://api.openai.com/v1/chat/completions")!
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
@@ -92,9 +101,10 @@ struct ARViewContainer: UIViewRepresentable {
                         ]
                     ]
                 ],
-                "max_tokens": 100
+                "max_tokens": 75
             ]
 
+            // Send request to OpenAI API
             do {
                 let jsonData = try JSONSerialization.data(withJSONObject: body)
                 request.httpBody = jsonData
@@ -114,6 +124,7 @@ struct ARViewContainer: UIViewRepresentable {
                     return
                 }
 
+                // Process response from OpenAI
                 do {
                     if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                        let choices = json["choices"] as? [[String: Any]],
@@ -142,6 +153,7 @@ struct ARViewContainer: UIViewRepresentable {
             task.resume()
         }
 
+        // Speech to text using AVSpeechSynthesizer
         func speakText(_ text: String) {
             let synthesizer = AVSpeechSynthesizer()
             let utterance = AVSpeechUtterance(string: text)
@@ -149,38 +161,49 @@ struct ARViewContainer: UIViewRepresentable {
             synthesizer.speak(utterance)
         }
 
+        // Display response text in AR
         func displayTextInAR(_ text: String) {
+            print(text)
             guard let arView = arView else { return }
 
             // Clear previous text anchors
             arView.scene.anchors.removeAll()
 
             let anchor = AnchorEntity(plane: .horizontal)
+//            let anchor = AnchorEntity(world: [0, 0, -0.3])  // Position it 0.3 meters in front of the camera
+
+            print("Anchor created")
 
 //            let mesh = MeshResource.generatePlane(width: 0.4, height: 0.2)
 //            var material = SimpleMaterial()
 //            material.color = .init(tint: .white.withAlphaComponent(0.9), texture: nil)
 //
 //            let planeEntity = ModelEntity(mesh: mesh, materials: [material])
+//            print("Plane created")
 
             let textMesh = MeshResource.generateText(
                 text,
-                extrusionDepth: 0.002,
-                font: .systemFont(ofSize: 0.04),
-                containerFrame: CGRect(x: 0, y: 0, width: 0.4, height: 0.2),
+                extrusionDepth: 0.002, // 3D depth of text
+                font: .systemFont(ofSize: 0.01),
+                containerFrame: CGRect(x: 0, y: 0, width: 0.4, height: 0.2), // bounding box of text
                 alignment: .center,
                 lineBreakMode: .byWordWrapping
             )
-
+            print("Text mesh created")
+            
             let textMaterial = SimpleMaterial(color: .black, isMetallic: false)
-            let textEntity = ModelEntity(mesh: textMesh, materials: [textMaterial])
+            let textEntity = ModelEntity(mesh: textMesh, materials: [textMaterial]) // combine text mesh with material to create 3D object
+            
+//            textEntity.orientation = simd_quatf(angle: .pi, axis: [0, 1, 0]) // Rotate 180 degrees around y axis
 
-            textEntity.position = [0, 0, 0.01] // Offset forward slightly
+            textEntity.position = [0, 0, 0] // Center text to anchor
 
 //            anchor.addChild(planeEntity)
             anchor.addChild(textEntity)
+            print("Added textEntity to anchor")
 
             arView.scene.addAnchor(anchor)
+            print("Added anchor to screen")
         }
     }
 }
