@@ -163,16 +163,13 @@ struct ARViewContainer: UIViewRepresentable {
 
         // Display response text in AR
         func displayTextInAR(_ text: String) {
-            print(text)
             guard let arView = arView else { return }
 
             // Clear previous text anchors
             arView.scene.anchors.removeAll()
 
-            let anchor = AnchorEntity(plane: .horizontal)
-//            let anchor = AnchorEntity(world: [0, 0, -0.3])  // Position it 0.3 meters in front of the camera
-
-            print("Anchor created")
+//            let anchor = AnchorEntity(plane: .horizontal)
+            let anchor = AnchorEntity(world: [0, 0, -0.5])  // Position it 0.3 meters in front of the camera
 
 //            let mesh = MeshResource.generatePlane(width: 0.4, height: 0.2)
 //            var material = SimpleMaterial()
@@ -183,27 +180,32 @@ struct ARViewContainer: UIViewRepresentable {
 
             let textMesh = MeshResource.generateText(
                 text,
-                extrusionDepth: 0.002, // 3D depth of text
-                font: .systemFont(ofSize: 0.01),
+                extrusionDepth: 0.004, // 3D depth of text
+                font: .systemFont(ofSize: 0.03),
                 containerFrame: CGRect(x: 0, y: 0, width: 0.4, height: 0.2), // bounding box of text
                 alignment: .center,
                 lineBreakMode: .byWordWrapping
             )
-            print("Text mesh created")
             
             let textMaterial = SimpleMaterial(color: .black, isMetallic: false)
-            let textEntity = ModelEntity(mesh: textMesh, materials: [textMaterial]) // combine text mesh with material to create 3D object
-            
-//            textEntity.orientation = simd_quatf(angle: .pi, axis: [0, 1, 0]) // Rotate 180 degrees around y axis
-
+            let textEntity = ModelEntity(mesh: textMesh, materials: [textMaterial])
             textEntity.position = [0, 0, 0] // Center text to anchor
+            
+            // Add bounding box behind text
+            let boxMesh = MeshResource.generatePlane(width: 0.45, height: 0.25) // Adjust size to fit text
+            var boxMaterial = SimpleMaterial()
+            boxMaterial.color = .init(tint: .black.withAlphaComponent(0.5)) // Semi-transparent black
+            let boxEntity = ModelEntity(mesh: boxMesh, materials: [boxMaterial])
+            boxEntity.position = [0, 0, -0.002]
+            
+           
 
 //            anchor.addChild(planeEntity)
+            
+            anchor.addChild(boxEntity)
             anchor.addChild(textEntity)
-            print("Added textEntity to anchor")
 
             arView.scene.addAnchor(anchor)
-            print("Added anchor to screen")
         }
     }
 }
