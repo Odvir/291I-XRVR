@@ -1,0 +1,19 @@
+platform :ios, '15.0'
+
+target 'MVP_iphone' do
+
+  use_frameworks!
+  pod 'MediaPipeTasksVision', '0.10.14'
+
+  # Pods for ObjectDetector
+end
+
+target 'MVP_iphoneTests' do
+    inherit! :search_paths
+    # Pods for testing
+ end
+
+target 'MVP_iphoneUITests' do
+    inherit! :search_paths
+    # Pods for UI testing
+ end
