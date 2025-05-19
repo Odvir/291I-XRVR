@@ -2,6 +2,7 @@ import SwiftUI
 import RealityKit
 import ARKit
 import AVFoundation
+import Vision
 
 struct ContentView: View {
     var body: some View {
@@ -39,20 +40,20 @@ struct ARViewContainer: UIViewRepresentable {
         weak var arView: ARView?
         var lastTapTime: Date = Date(timeIntervalSince1970: 0)
         let cooldownDuration: TimeInterval = 15 // seconds
+        var textAnchor: AnchorEntity?
+        var bookAnchor: AnchorEntity?
 
         // Method to handle tap gestures on the AR view
         @objc func handleTap() {
             guard let arView = arView else { return }
 
             let now = Date()
-            // Prevent taps w/in cooldown period (15 sec)
             if now.timeIntervalSince(lastTapTime) < cooldownDuration {
                 print("Cooldown active. Please wait...")
                 return
             }
             lastTapTime = now
 
-            // Take snapshot of current AR view
             arView.snapshot(saveToHDR: false) { optionalImage in
                 guard let image = optionalImage else {
                     print("Snapshot failed.")
@@ -62,14 +63,256 @@ struct ARViewContainer: UIViewRepresentable {
                 print("Snapshot taken.")
                 self.displayTextInAR("Snapshot captured.")
 
-                // Convert to base64 and send to OpenAI
                 if let base64String = self.imageToBase64(image: image) {
-                    self.sendImageToOpenAI(base64Image: base64String) // Encode image, send to OpenAI
+                    self.sendImageToOpenAI(base64Image: base64String) { bookTitle in
+                        guard let arView = self.arView else { return }
+                        DispatchQueue.main.async {
+                            let bookEntity = self.createBookWithTitle(bookTitle)
+                            bookEntity.scale = [0.0007, 0.0007, 0.0007]
+                            bookEntity.orientation = simd_quatf(angle: .pi/2, axis: [0, 1, 0])
+
+                            let titleEntity = self.createFloatingTitle(text: bookTitle)
+
+                            let cameraTransform = arView.cameraTransform
+                            var position = cameraTransform.translation
+                            position.z -= 0.4
+
+                            let anchor = AnchorEntity(world: position)
+                            anchor.addChild(bookEntity)
+                            anchor.addChild(titleEntity)
+
+                            arView.scene.anchors.append(anchor)
+                            self.bookAnchor = anchor
+                        }
+                    }
                 } else {
                     print("Failed to encode image.")
                 }
             }
         }
+
+        func createFloatingTitle(text: String) -> Entity {
+            let mesh = MeshResource.generateText(
+                text,
+                extrusionDepth: 0.004,
+                font: .systemFont(ofSize: 0.01),
+                containerFrame: CGRect(x: 0, y: 0, width: 0.4, height: 0.2),
+                alignment: .center,
+                lineBreakMode: .byWordWrapping
+            )
+
+            var material = UnlitMaterial()
+            material.baseColor = .color(.white)
+
+            let textEntity = ModelEntity(mesh: mesh, materials: [material])
+
+            // Center the text mesh geometry
+            let boundsCenter = mesh.bounds.center
+            textEntity.position = [-boundsCenter.x, -boundsCenter.y, 0.085] // push forward in front of book
+
+            return textEntity
+        }
+
+        func createBookWithTitle(_ title: String) -> Entity {
+            print(title)
+            let book = try! Entity.loadModel(named: "Book")
+            return book
+        }
+
+
+
+
+
+        func detectBookCoverLocally(from originalImage: UIImage) {
+            print("got called")
+            guard let arView = arView else { return }
+            guard let cgImage = originalImage.cgImage else {
+                print("❌ Failed to get CGImage from snapshot")
+                return
+            }
+
+            let request = VNDetectRectanglesRequest { request, error in
+                if let error = error {
+                    print("❌ Vision error: \(error)")
+                    return
+                }
+
+                guard let results = request.results as? [VNRectangleObservation],
+                      let best = results.first else {
+                    print("❌ No rectangles found")
+                    return
+                }
+
+                let width = CGFloat(cgImage.width)
+                let height = CGFloat(cgImage.height)
+                let box = best.boundingBox
+
+                // Convert normalized bounding box to pixel space
+                let rect = CGRect(
+                    x: box.origin.x * width,
+                    y: (1 - box.origin.y - box.height) * height,
+                    width: box.width * width,
+                    height: box.height * height
+                )
+
+                print("📐 Local bounding box: \(rect)")
+
+                if let cropped = self.cropImage(originalImage, to: rect) {
+                    DispatchQueue.main.async {
+                        self.placeBookInAR(with: cropped)
+                    }
+                } else {
+                    print("❌ Cropping failed.")
+                }
+            }
+
+            // Tune rectangle detection
+            request.minimumConfidence = 0.8
+            request.minimumAspectRatio = 0.5
+            request.maximumAspectRatio = 1.5
+
+            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+            try? handler.perform([request])
+        }
+        
+        func placeBookInAR(with coverImage: UIImage) {
+            guard let arView = arView else { return }
+            // Remove the previous book anchor if it exists
+            if let oldAnchor = bookAnchor {
+                arView.scene.anchors.remove(oldAnchor)
+            }
+        
+            // Create book dimensions (width, height, depth in meters)
+            let bookWidth: Float = 0.12
+            let bookHeight: Float = 0.02
+            let bookDepth: Float = 0.18
+
+            // Create the book mesh
+            let bookMesh = MeshResource.generateBox(width: bookWidth, height: bookHeight, depth: bookDepth)
+
+            // Create the texture from the cover image
+            let textureResource: TextureResource
+            do {
+                textureResource = try TextureResource(
+                    image: coverImage.cgImage!,
+                    options: .init(semantic: .color)
+                )
+            } catch {
+                print("Failed to create texture: \(error)")
+                return
+            }
+
+            // Create material using the texture for the front (z+) face
+            var bookMaterial = UnlitMaterial()
+            bookMaterial.baseColor = MaterialColorParameter.texture(textureResource)
+
+
+
+            // Apply same material to all sides for now (can be improved later)
+            let materials: [RealityKit.Material] = Array(repeating: bookMaterial, count: 6)
+
+            // Create entity with mesh and material
+            let bookEntity = ModelEntity(mesh: bookMesh, materials: materials)
+
+            // Place the book 0.4 meters in front of the camera
+            let cameraTransform = arView.cameraTransform
+            var position = cameraTransform.translation
+            position.z -= 0.4
+            let anchor = AnchorEntity(world: position)
+
+            anchor.addChild(bookEntity)
+            arView.scene.anchors.append(anchor)
+            bookAnchor = anchor
+        }
+        func parseBoundingBox(from response: String) -> CGRect? {
+            // Try to extract { "x":..., "y":..., ... } from response string
+            if let data = response.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Int],
+               let x = json["x"], let y = json["y"],
+               let width = json["width"], let height = json["height"] {
+                return CGRect(x: x, y: y, width: width, height: height)
+            }
+            return nil
+        }
+
+        func cropImage(_ image: UIImage, to rect: CGRect) -> UIImage? {
+            guard let cgImage = image.cgImage else { return nil }
+            guard let croppedCGImage = cgImage.cropping(to: rect) else { return nil }
+            return UIImage(cgImage: croppedCGImage)
+        }
+        
+        func findBookCoverRegion(from base64Image: String, originalImage: UIImage) {
+            guard let apiKey = ProcessInfo.processInfo.environment["API_KEY"] else {
+                print("API_KEY not found in environment variables.")
+                return
+            }
+            
+
+            let url = URL(string: "https://api.openai.com/v1/chat/completions")!
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+
+            let body: [String: Any] = [
+                "model": "gpt-4o",
+                "messages": [
+                    [
+                        "role": "user",
+                        "content": [
+                            ["type": "text", "text": "Find only the front cover of the book in this image (ignore surroundings and spine) The cover should be around the center of the image and probably the largest rectangle in the image. Return the bounding box for said rectangle as four integers: x, y, width, height (in pixels). Format it exactly like this: {\"x\":123,\"y\":456,\"width\":789,\"height\":321}"],
+                            ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64,\(base64Image)"]]
+                        ]
+                    ]
+                ],
+                "max_tokens": 100
+            ]
+
+            do {
+                let jsonData = try JSONSerialization.data(withJSONObject: body)
+                request.httpBody = jsonData
+            } catch {
+                print("Failed to serialize JSON.")
+                return
+            }
+
+            URLSession.shared.dataTask(with: request) { data, _, error in
+                if let error = error {
+                    print("OpenAI error: \(error)")
+                    return
+                }
+
+                guard let data = data else {
+                    print("No data received.")
+                    return
+                }
+
+                do {
+                    if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let choices = json["choices"] as? [[String: Any]],
+                       let firstChoice = choices.first,
+                       let message = firstChoice["message"] as? [String: Any],
+                       let content = message["content"] as? String,
+                       let boundingBox = self.parseBoundingBox(from: content) {
+
+                        print("📦 Bounding box: \(boundingBox)")
+
+                        if let croppedImage = self.cropImage(originalImage, to: boundingBox) {
+                            DispatchQueue.main.async {
+                                self.placeBookInAR(with: croppedImage)
+                            }
+                        }
+
+                    } else {
+                        print("Could not parse bounding box from OpenAI response.")
+                    }
+                } catch {
+                    print("JSON error: \(error)")
+                }
+
+            }.resume()
+        }
+
 
         // Convert image to base64 string
         func imageToBase64(image: UIImage) -> String? {
@@ -77,7 +320,7 @@ struct ARViewContainer: UIViewRepresentable {
             return imageData.base64EncodedString()
         }
 
-        func sendImageToOpenAI(base64Image: String) {
+        func sendImageToOpenAI(base64Image: String, completion: @escaping (String) -> Void) {
             guard let apiKey = ProcessInfo.processInfo.environment["API_KEY"] else {
                 print("API_KEY not found in environment variables.")
                 return
@@ -96,7 +339,7 @@ struct ARViewContainer: UIViewRepresentable {
                     [
                         "role": "user",
                         "content": [
-                            ["type": "text", "text": "Identify the book in this image, then write a two-sentence description about it."],
+                            ["type": "text", "text": "Identify the book in this image, then write a two-sentence description about it. Write it so that the book title goes first, then a colon, then the rest of the description. The book title should just be writtem like normal text"],
                             ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64,\(base64Image)"]]
                         ]
                     ]
@@ -130,12 +373,19 @@ struct ARViewContainer: UIViewRepresentable {
                        let choices = json["choices"] as? [[String: Any]],
                        let message = choices.first?["message"] as? [String: Any],
                        let content = message["content"] as? String {
+                        
                         print("\n=== OpenAI Response ===\n\(content)\n========================\n")
 
-                        // Speak the response text
+                        // Extract title (everything before the first colon)
+                        if let range = content.range(of: ":") {
+                            let title = String(content[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                            completion(title)  // Call the completion handler with the title
+                        } else {
+                            completion("Unknown Title")
+                        }
+
                         self.speakText(content)
 
-                        // Update the AR overlay text
                         DispatchQueue.main.async {
                             self.displayTextInAR(content)
                         }
@@ -161,44 +411,44 @@ struct ARViewContainer: UIViewRepresentable {
             synthesizer.speak(utterance)
         }
 
-        // Display response text in AR
         func displayTextInAR(_ text: String) {
             guard let arView = arView else { return }
 
-            // Clear previous text anchors
-            arView.scene.anchors.removeAll()
+            // Remove previous text anchor only
+            if let oldAnchor = textAnchor {
+                arView.scene.anchors.remove(oldAnchor)
+            }
 
-            let anchor = AnchorEntity(world: [0, 0, -0.5])  // Position it 0.5 meters in front of the camera
+            let anchor = AnchorEntity(world: [0, 0, -0.5])  // Position text 0.5m in front of camera
 
             let textMesh = MeshResource.generateText(
                 text,
-                extrusionDepth: 0.004, // 3D depth of text
+                extrusionDepth: 0.004,
                 font: .systemFont(ofSize: 0.01),
-                containerFrame: CGRect(x: 0, y: 0, width: 0.4, height: 0.2), // bounding box of text
+                containerFrame: CGRect(x: 0, y: 0, width: 0.4, height: 0.2),
                 alignment: .center,
                 lineBreakMode: .byWordWrapping
             )
-            
+
             let textMaterial = SimpleMaterial(color: .black, isMetallic: false)
             let textEntity = ModelEntity(mesh: textMesh, materials: [textMaterial])
-            
+
             let boundsCenter = textMesh.bounds.center
             textEntity.position = [-boundsCenter.x, -boundsCenter.y, 0]
-            
-            // Get the size of the text mesh
+
             let textSize = textMesh.bounds.extents
-            
             let boxMesh = MeshResource.generatePlane(width: textSize.x * 1.1, height: textSize.y * 1.5)
             var boxMaterial = SimpleMaterial()
             boxMaterial.color = .init(tint: .black.withAlphaComponent(0.5))
             let boxEntity = ModelEntity(mesh: boxMesh, materials: [boxMaterial])
             boxEntity.position = [0, 0, 0]
 
-            
             boxEntity.addChild(textEntity)
             anchor.addChild(boxEntity)
 
+            // Add new anchor and remember it
             arView.scene.addAnchor(anchor)
+            textAnchor = anchor
         }
     }
 }
