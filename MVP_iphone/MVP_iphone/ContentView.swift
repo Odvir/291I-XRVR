@@ -30,7 +30,7 @@ struct ARViewContainer: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: ARView, context: Context) {}
-    
+
     func makeCoordinator() -> Coordinator {
         return Coordinator()
     }
@@ -43,7 +43,7 @@ struct ARViewContainer: UIViewRepresentable {
         var textAnchor: AnchorEntity?
         var bookAnchor: AnchorEntity?
 
-        // Method to handle tap gestures on the AR view
+        // MARK: - Tap Handler
         @objc func handleTap() {
             guard let arView = arView else { return }
 
@@ -83,6 +83,17 @@ struct ARViewContainer: UIViewRepresentable {
 
                             arView.scene.anchors.append(anchor)
                             self.bookAnchor = anchor
+
+                            // Fetch rating
+                            self.fetchBookInfo(for: bookTitle) { infoText in
+                                DispatchQueue.main.async {
+                                    let infoEntity = self.createFloatingTitle(text: infoText)
+                                    infoEntity.position = [titleEntity.position.x,
+                                                           titleEntity.position.y + 0.09,
+                                                           titleEntity.position.z]
+                                    anchor.addChild(infoEntity)
+                                }
+                            }
                         }
                     }
                 } else {
@@ -91,6 +102,53 @@ struct ARViewContainer: UIViewRepresentable {
             }
         }
 
+        // MARK: - Google Books API
+        func fetchBookInfo(for title: String, completion: @escaping (String) -> Void) {
+            let query = title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+            let urlString = "https://www.googleapis.com/books/v1/volumes?q=intitle:\(query)&maxResults=1&printType=books"
+            guard let url = URL(string: urlString) else {
+                completion("No extra info available.")
+                return
+            }
+
+            URLSession.shared.dataTask(with: url) { data, response, error in
+                if let error = error {
+                    print("Books API error: \(error)")
+                    completion("Rating unavailable.")
+                    return
+                }
+                guard let data = data else {
+                    print("Books API returned no data.")
+                    completion("Rating unavailable.")
+                    return
+                }
+                do {
+                    if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let items = json["items"] as? [[String: Any]],
+                       let first = items.first,
+                       let volumeInfo = first["volumeInfo"] as? [String: Any] {
+
+                        let avg = volumeInfo["averageRating"] as? Double
+                        let count = volumeInfo["ratingsCount"] as? Int ?? 0
+                        var info = ""
+                        if let avg = avg {
+                            info += String(format: "★ %.1f/5", avg)
+                            if count > 0 { info += " (\(count) ratings)" }
+                        } else {
+                            info += "No rating found"
+                        }
+                        completion(info)
+                    } else {
+                        completion("No extra info available.")
+                    }
+                } catch {
+                    print("Books API JSON error: \(error)")
+                    completion("Rating unavailable.")
+                }
+            }.resume()
+        }
+
+        // MARK: - Entity Builders
         func createFloatingTitle(text: String) -> Entity {
             let mesh = MeshResource.generateText(
                 text,
@@ -119,10 +177,7 @@ struct ARViewContainer: UIViewRepresentable {
             return book
         }
 
-
-
-
-
+        // MARK: - Local Vision detection (unused when using GPT for bbox)
         func detectBookCoverLocally(from originalImage: UIImage) {
             print("got called")
             guard let arView = arView else { return }
@@ -174,14 +229,14 @@ struct ARViewContainer: UIViewRepresentable {
             let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
             try? handler.perform([request])
         }
-        
+
         func placeBookInAR(with coverImage: UIImage) {
             guard let arView = arView else { return }
             // Remove the previous book anchor if it exists
             if let oldAnchor = bookAnchor {
                 arView.scene.anchors.remove(oldAnchor)
             }
-        
+
             // Create book dimensions (width, height, depth in meters)
             let bookWidth: Float = 0.12
             let bookHeight: Float = 0.02
@@ -206,8 +261,6 @@ struct ARViewContainer: UIViewRepresentable {
             var bookMaterial = UnlitMaterial()
             bookMaterial.baseColor = MaterialColorParameter.texture(textureResource)
 
-
-
             // Apply same material to all sides for now (can be improved later)
             let materials: [RealityKit.Material] = Array(repeating: bookMaterial, count: 6)
 
@@ -224,6 +277,7 @@ struct ARViewContainer: UIViewRepresentable {
             arView.scene.anchors.append(anchor)
             bookAnchor = anchor
         }
+
         func parseBoundingBox(from response: String) -> CGRect? {
             // Try to extract { "x":..., "y":..., ... } from response string
             if let data = response.data(using: .utf8),
@@ -240,13 +294,12 @@ struct ARViewContainer: UIViewRepresentable {
             guard let croppedCGImage = cgImage.cropping(to: rect) else { return nil }
             return UIImage(cgImage: croppedCGImage)
         }
-        
+
         func findBookCoverRegion(from base64Image: String, originalImage: UIImage) {
             guard let apiKey = ProcessInfo.processInfo.environment["API_KEY"] else {
                 print("API_KEY not found in environment variables.")
                 return
             }
-            
 
             let url = URL(string: "https://api.openai.com/v1/chat/completions")!
             var request = URLRequest(url: url)
@@ -313,7 +366,6 @@ struct ARViewContainer: UIViewRepresentable {
             }.resume()
         }
 
-
         // Convert image to base64 string
         func imageToBase64(image: UIImage) -> String? {
             guard let imageData = image.jpegData(compressionQuality: 0.8) else { return nil }
@@ -325,7 +377,7 @@ struct ARViewContainer: UIViewRepresentable {
                 print("API_KEY not found in environment variables.")
                 return
             }
-            
+
             // OpenAI API request
             let url = URL(string: "https://api.openai.com/v1/chat/completions")!
             var request = URLRequest(url: url)
@@ -373,7 +425,7 @@ struct ARViewContainer: UIViewRepresentable {
                        let choices = json["choices"] as? [[String: Any]],
                        let message = choices.first?["message"] as? [String: Any],
                        let content = message["content"] as? String {
-                        
+
                         print("\n=== OpenAI Response ===\n\(content)\n========================\n")
 
                         // Extract title (everything before the first colon)
@@ -385,7 +437,6 @@ struct ARViewContainer: UIViewRepresentable {
                         }
 
                         self.speakText(content)
-
                         DispatchQueue.main.async {
                             self.displayTextInAR(content)
                         }
@@ -403,7 +454,7 @@ struct ARViewContainer: UIViewRepresentable {
             task.resume()
         }
 
-        // Speech to text using AVSpeechSynthesizer
+        // MARK: - AVSpeech
         func speakText(_ text: String) {
             let synthesizer = AVSpeechSynthesizer()
             let utterance = AVSpeechUtterance(string: text)
@@ -411,6 +462,7 @@ struct ARViewContainer: UIViewRepresentable {
             synthesizer.speak(utterance)
         }
 
+        // MARK: - Display helpers
         func displayTextInAR(_ text: String) {
             guard let arView = arView else { return }
 
