@@ -6,6 +6,7 @@ import RealityKit
 import ARKit
 import AVFoundation
 import MediaPipeTasksVision
+import UIKit
 
 // Main SwiftUI view
 struct AutoScreenshotContentView: View {
@@ -24,8 +25,10 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
         let config = ARWorldTrackingConfiguration()
         config.environmentTexturing = .automatic
         config.planeDetection = [.horizontal]
+    
         arView.session.run(config)
 
+        arView.session.delegate = context.coordinator // handle camera freezing
         context.coordinator.arView = arView
         context.coordinator.setupObjectDetector() // object detection
         context.coordinator.startCameraCapture() // capture camera feeds to feed into MediaPipe
@@ -40,24 +43,29 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
     }
 
     // Handles camera and object detection logic
-    class Coordinator: NSObject {
+    class Coordinator: NSObject, ObjectDetectorLiveStreamDelegate, ARSessionDelegate {
         weak var arView: ARView?
 
         private var objectDetector: ObjectDetector? // MediaPipe object detector instance
         private var captureSession: AVCaptureSession? // Camera capture session
+        
+        private var lastDetectionTime: TimeInterval = 0
+        private let detectionInterval: TimeInterval = 0.3
 
-        // Object detection
+        // Set up object detector
         func setupObjectDetector() {
             do {
                 let baseOptions = BaseOptions()
-                baseOptions.modelAssetPath = "efficientdet_lite0.tflite" // TODO: replace file?
-                                
+                baseOptions.modelAssetPath = "efficientdet_lite0.tflite"
+                
                 let options = ObjectDetectorOptions()
                 options.baseOptions = baseOptions
-                options.runningMode = MediaPipeTasksVision.RunningMode.liveStream   // live camera feed mode
+                options.runningMode = .liveStream   // live camera feed mode
                 options.maxResults = 1  // max num of objects to detect per frame
-                options.scoreThreshold = 0.5    // min. confidence threshold
-
+                options.scoreThreshold = 0.4    // min. confidence threshold
+                
+                options.objectDetectorLiveStreamDelegate = self
+                
                 objectDetector = try ObjectDetector(options: options)
 
                 print("MediaPipe ObjectDetector initialized")
@@ -86,81 +94,107 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
             }
 
             let output = AVCaptureVideoDataOutput()
+            
+             // Added to address error "Unsupported pixel format for CVPixelBuffer. Expected kCVPixelFormatType_32BGRA"
+            output.videoSettings = [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+            ]
+            
             output.setSampleBufferDelegate(self, queue: DispatchQueue(label: "camera_queue"))
             captureSession.addOutput(output)
 
             captureSession.startRunning() // run camera session async
             print("Camera started")
         }
+        
+        // Procsss frame detections
+        func objectDetector(_ objectDetector: ObjectDetector,
+                            didFinishDetection result: ObjectDetectorResult?,
+                            timestampInMilliseconds: Int,
+                            error: Error?) {
+            if let error = error {
+                print("Detection error: \(error)")
+                return
+            }
+
+            guard let result = result else {
+                print("No detection result")
+                return
+            }
+
+            for detection in result.detections {
+                let categoryNames = detection.categories.map { $0.categoryName ?? "?" }
+                print("Detected categories: \(categoryNames)")
+                
+                if let category = detection.categories.first,
+                   category.categoryName?.lowercased() == "book",
+                   category.score > 0.4 {
+                    print("Book detected (from delegate)! Confidence: \(category.score)")
+                }
+            }
+        }
+        
+        func session(_ session: ARSession, didFailWithError error: Error) {
+            let nsError = error as NSError
+            print("ARSession failed: \(nsError.localizedDescription) (code: \(nsError.code))")
+
+            let config = ARWorldTrackingConfiguration()
+            config.environmentTexturing = .automatic
+            config.planeDetection = [.horizontal]
+
+            // Only restart if it's recoverable (code 200 = world tracking lost)
+            if nsError.code == 200 {
+                print("Restarting AR session due to world tracking failure")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    self.arView?.session.run(config, options: [.resetTracking, .removeExistingAnchors])
+                }
+            } else {
+                print("Not restarting — unrecoverable sensor error")
+            }
+        }
+
+        func sessionWasInterrupted(_ session: ARSession) {
+            print("ARSession was interrupted")
+        }
+
+        func sessionInterruptionEnded(_ session: ARSession) {
+            print("ARSession interruption ended — restarting")
+
+            let config = ARWorldTrackingConfiguration()
+            config.environmentTexturing = .automatic
+            config.planeDetection = [.horizontal]
+            arView?.session.run(config, options: [.resetTracking, .removeExistingAnchors])
+        }
+        
     }
 }
 
 extension AutoScreenshotARViewContainer.Coordinator: AVCaptureVideoDataOutputSampleBufferDelegate {
     // Called for every video frame
-//    func captureOutput(_ output: AVCaptureOutput,
-//                       didOutput sampleBuffer: CMSampleBuffer,
-//                       from connection: AVCaptureConnection) {
-//        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer),
-//              let detector = objectDetector else { return }
-//        
-//        // Create MPImage from pixel buffer with error handling
-//        guard let mpImage = try? MPImage(pixelBuffer: pixelBuffer) else {
-//            print("Failed to create MPImage")
-//            return
-//        }
-//
-//        let timestampMs = Int(Date().timeIntervalSince1970 * 1000)
-//
-//        detector.detectAsync(image: mpImage, timestampInMilliseconds: timestampMs)
-//        
-//        
-////        detector.detectAsync(image: mpImage, timestampInMilliseconds: timestampMs) { result, error in
-////            if let error = error {
-////                print("Detection error: \(error.localizedDescription)")
-////                return
-////            }
-////
-////            // Extract detections
-////            guard let detections = result?.detections else { return }
-////
-////            // Check each detection
-////            for detection in detections {
-////                if let category = detection.categories.first,
-////                   category.categoryName.lowercased() == "book",
-////                   category.score > 0.5 {
-////                    print("Book detected! Confidence: \(category.score)")
-////                }
-////            }
-////        }
-//    }
-    
     func captureOutput(_ output: AVCaptureOutput,
                            didOutput sampleBuffer: CMSampleBuffer,
                            from connection: AVCaptureConnection) {
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer),
-              let detector = objectDetector else { return }
+//        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer),
+        guard let detector = objectDetector else { return }
+        
+        // Throttle detections to avoid overloading
+        let now = Date().timeIntervalSince1970
+        if now - lastDetectionTime < detectionInterval { return }
+        lastDetectionTime = now
 
-        // Create MPImage without error handling (force unwrap)
-        guard let mpImage = try? MPImage(pixelBuffer: pixelBuffer) else {
+        let timestamp = Int(now * 1000)
+
+        // Convert frame to MediaPipe MPImage
+        guard let mpImage = try? MPImage(sampleBuffer: sampleBuffer, orientation: .up) else {
             print("Failed to create MPImage")
             return
         }
 
-        // Synchronously detect objects in this frame (no callback)
-        guard let result = try? detector.detect(image: mpImage) else {
-            print("Detection failed")
-            return
-        }
-
-        let detections = result.detections
-
-        for detection in detections {
-            if let category = detection.categories.first,
-               category.categoryName?.lowercased() == "book",
-               category.score > 0.5 {
-                print("Book detected! Confidence: \(category.score)")
-            }
+        // Asynchronously detect objects in this frame
+        do {
+            try detector.detectAsync(image: mpImage, timestampInMilliseconds: timestamp)
+        } catch {
+            print("Detection failed: \(error.localizedDescription)")
         }
     }
-
 }
