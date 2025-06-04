@@ -68,10 +68,7 @@ struct ARViewContainer: UIViewRepresentable {
                         guard let arView = self.arView else { return }
                         DispatchQueue.main.async {
                             let bookEntity = self.createBookWithTitle(bookTitle)
-                            bookEntity.scale = [0.0007, 0.0007, 0.0007]
-                            bookEntity.orientation = simd_quatf(angle: .pi/2, axis: [0, 1, 0])
-
-                            let titleEntity = self.createFloatingTitle(text: bookTitle)
+                            let titleEntity = self.createFloatingTitle(text: bookTitle, for: bookEntity)
 
                             let cameraTransform = arView.cameraTransform
                             var position = cameraTransform.translation
@@ -90,35 +87,51 @@ struct ARViewContainer: UIViewRepresentable {
                 }
             }
         }
+        func createFloatingTitle(text: String, for bookEntity: Entity) -> Entity {
+            guard let model = bookEntity.components[ModelComponent.self] else {
+                print("Book model missing")
+                return ModelEntity()
+            }
 
-        func createFloatingTitle(text: String) -> Entity {
-            let mesh = MeshResource.generateText(
+            let bounds = model.mesh.bounds
+            let bookCenter = bounds.center
+            let bookExtents = bounds.extents
+            let coverZ = bookCenter.z + (bookExtents.z / 2)
+
+            let textMesh = MeshResource.generateText(
                 text,
-                extrusionDepth: 0.004,
+                extrusionDepth: 0.001,
                 font: .systemFont(ofSize: 0.01),
-                containerFrame: CGRect(x: 0, y: 0, width: 0.4, height: 0.2),
+                containerFrame: CGRect(x: 0, y: 0, width: 0.1, height: 0.05),
                 alignment: .center,
                 lineBreakMode: .byWordWrapping
             )
 
-            var material = UnlitMaterial()
-            material.baseColor = .color(.white)
+            let material = UnlitMaterial(color: .white)
+            let textEntity = ModelEntity(mesh: textMesh, materials: [material])
 
-            let textEntity = ModelEntity(mesh: mesh, materials: [material])
-
-            // Center the text mesh geometry
-            let boundsCenter = mesh.bounds.center
-            textEntity.position = [-boundsCenter.x, -boundsCenter.y, 0.085] // push forward in front of book
-
+            let textCenter = textMesh.bounds.center
+            textEntity.position = [
+                -textCenter.x,
+                 -textCenter.y,
+                0.06  // adjust for book's scale!
+            ]
+            textEntity.orientation = simd_quatf(angle: -.pi / 8, axis: [1, 0, 0])
             return textEntity
         }
 
         func createBookWithTitle(_ title: String) -> Entity {
-            print(title)
-            let book = try! Entity.loadModel(named: "Book")
-            return book
-        }
+            let bookEntity = try! Entity.loadModel(named: "Book")
 
+            // Apply orientation and scale first
+            bookEntity.scale = [0.0007, 0.0007, 0.0007]
+            bookEntity.orientation =
+                simd_quatf(angle: .pi / 3, axis: [1, 0, 0]) *
+                simd_quatf(angle: .pi / 2, axis: [0, 1, 0]) *
+                simd_quatf(angle: -.pi / 8, axis: [0, 0, 1])
+
+            return bookEntity
+        }
 
 
 
