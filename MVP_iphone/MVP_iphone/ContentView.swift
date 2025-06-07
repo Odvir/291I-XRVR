@@ -72,15 +72,15 @@ struct ARViewContainer: UIViewRepresentable {
                             var position = cameraTransform.translation
                             position.z -= 0.4
                             let anchor = AnchorEntity(world: position)
-//                            self.fetchBookInfo(for: bookTitle) { infoText in
-//                                DispatchQueue.main.async {
-//                                    let infoEntity = self.createFloatingInfo(text: infoText)
-//                                    infoEntity.position = [titleEntity.position.x,
-//                                                           titleEntity.position.y + 0.09,
-//                                                           titleEntity.position.z]
-//                                    anchor.addChild(infoEntity)
-//                                }
-//                            }
+                            self.fetchBookInfo(for: bookTitle) { infoText in
+                                DispatchQueue.main.async {
+                                    let infoEntity = self.createFloatingInfo(text: infoText)
+                                    infoEntity.position = [titleEntity.position.x,
+                                                           titleEntity.position.y + 0.09,
+                                                           titleEntity.position.z]
+                                    anchor.addChild(infoEntity)
+                                }
+                            }
                             anchor.addChild(bookEntity)
                             anchor.addChild(titleEntity)
 
@@ -493,7 +493,7 @@ struct ARViewContainer: UIViewRepresentable {
                 arView.scene.anchors.remove(oldAnchor)
             }
 
-            let anchor = AnchorEntity(world: [0, 0, -0.5])  // Position text 0.5m in front of camera
+            let anchor = AnchorEntity(world: [0, 0.3, -0.5])  // Position text 0.5m in front of camera
 
             let textMesh = MeshResource.generateText(
                 text,
