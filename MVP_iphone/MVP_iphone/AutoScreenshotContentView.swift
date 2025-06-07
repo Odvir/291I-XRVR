@@ -50,11 +50,14 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
         
         // For object detections
         private var lastDetectionTime: TimeInterval = 0
-        private let detectionInterval: TimeInterval = 0.3
+        private let detectionInterval: TimeInterval = 0.5
         
         // For snapshots
         var lastOpenAISnapshotTime: TimeInterval = 0
-        let snapshotCooldown: TimeInterval = 10 // seconds
+        let snapshotCooldown: TimeInterval = 15 // seconds
+        
+        // For display text to screen
+        var textAnchor: AnchorEntity?
 
         // Set up object detector
         func setupObjectDetector() {
@@ -66,7 +69,7 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
                 options.baseOptions = baseOptions
                 options.runningMode = .liveStream   // live camera feed mode
                 options.maxResults = 1  // max num of objects to detect per frame
-                options.scoreThreshold = 0.4    // min. confidence threshold
+                options.scoreThreshold = 0.5    // min. confidence threshold
                 
                 options.objectDetectorLiveStreamDelegate = self
                 
@@ -110,8 +113,8 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
 //            captureSession.startRunning() // run camera session async
 //            print("Camera started")
             
-            // Delay detection for 3 seconds to prevent immediate detections, handle in background thread
-            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 3.0) {
+            // Delay detection for 2 seconds to prevent immediate detections, handle in background thread
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 2.0) {
                 output.setSampleBufferDelegate(self, queue: DispatchQueue(label: "camera_queue"))
                 
                 if captureSession.canAddOutput(output) {
@@ -119,7 +122,7 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
                 }
                 
                 captureSession.startRunning()
-                print("Camera started (after 3s delay)")
+                print("Camera started (after 2s delay)")
             }
         }
         
@@ -146,8 +149,8 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
                 
                 if let category = detection.categories.first,
                    category.categoryName?.lowercased() == "book",
-                   category.score > 0.4 {
-                    print("Book detected (from delegate)! Confidence: \(category.score)")
+                   category.score > 0.5 {
+                    print("Book detected! Confidence: \(category.score)")
                     handleBookDetection() // call function to send snapshot to OpenAI
                 }
 //                else{
@@ -161,7 +164,7 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
 
             let now = Date().timeIntervalSince1970
             if now - lastOpenAISnapshotTime < snapshotCooldown {
-                print("Snapshot throttled.")
+                print("Snapshot skipped.")
                 return
             }
             lastOpenAISnapshotTime = now
@@ -186,23 +189,26 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
                         return
                     }
                     
-                    // TEST: restart tracking and camera after snapshot taken
+                    self.displayTextInAR("Snapshot captured.")
                     
-                    // reset AR tracking
+                    // TEST: restart tracking and camera after snapshot taken
                     let config = ARWorldTrackingConfiguration()
                     config.environmentTexturing = .automatic
                     config.planeDetection = [.horizontal]
                     arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
                     
+                    self.captureSession?.stopRunning()
+                    self.captureSession = nil
                     self.startCameraCapture() // restart camera capture session
                     
-
-                    UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil) // save snapshot to photo library
-                    print("Snapshot saved to photo library")
-                    
-                    if let base64 = self.imageToBase64(image: image) {
-                        self.sendImageToOpenAI(base64Image: base64) { description in
-                            print("OpenAI output book title: \(description)")
+                    DispatchQueue.global(qos: .utility).async {
+                        UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil) // save snapshot to photo library
+                        print("Snapshot saved to photo library")
+                        
+                        if let base64 = self.imageToBase64(image: image) {
+                            self.sendImageToOpenAI(base64Image: base64) { description in
+                                print("Detected Book Title: \(description)\n========================")
+                            }
                         }
                     }
                 }
@@ -264,7 +270,7 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
                        let message = choices.first?["message"] as? [String: Any],
                        let content = message["content"] as? String {
 
-                        print("\n=== OpenAI Response ===\n\(content)\n========================\n")
+                        print("\n=== OpenAI Response ===\n\(content)\n========================")
 
                         // Extract title (everything before the first colon)
                         if let range = content.range(of: ":") {
@@ -272,6 +278,10 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
                             completion(title)  // Call the completion handler with the title
                         } else {
                             completion("Unknown Title")
+                        }
+                        
+                        DispatchQueue.main.async {
+                            self.displayTextInAR(content)
                         }
                     } else {
                         print("Could not parse OpenAI response.")
@@ -293,6 +303,46 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
             return imageData.base64EncodedString()
         }
         
+        func displayTextInAR(_ text: String) {
+            guard let arView = arView else { return }
+
+            // Remove previous text anchor only
+            if let oldAnchor = textAnchor {
+                arView.scene.anchors.remove(oldAnchor)
+            }
+
+            let anchor = AnchorEntity(world: [0, 0, -0.5])  // Position text 0.5m in front of camera
+
+            let textMesh = MeshResource.generateText(
+                text,
+                extrusionDepth: 0.004,
+                font: .systemFont(ofSize: 0.01),
+                containerFrame: CGRect(x: 0, y: 0, width: 0.25, height: 0.4),
+                alignment: .center,
+                lineBreakMode: .byWordWrapping
+            )
+
+            let textMaterial = SimpleMaterial(color: .black, isMetallic: false)
+            let textEntity = ModelEntity(mesh: textMesh, materials: [textMaterial])
+
+            let boundsCenter = textMesh.bounds.center
+            textEntity.position = [-boundsCenter.x, -boundsCenter.y, 0]
+
+            let textSize = textMesh.bounds.extents
+            let boxMesh = MeshResource.generatePlane(width: textSize.x * 1.1, height: textSize.y * 1.5)
+            var boxMaterial = SimpleMaterial()
+            boxMaterial.color = .init(tint: .black.withAlphaComponent(0.5))
+            let boxEntity = ModelEntity(mesh: boxMesh, materials: [boxMaterial])
+            boxEntity.position = [0, 0, 0]
+
+            boxEntity.addChild(textEntity)
+            anchor.addChild(boxEntity)
+
+            // Add new anchor and remember it
+            arView.scene.addAnchor(anchor)
+            textAnchor = anchor
+        }
+        
         func session(_ session: ARSession, didFailWithError error: Error) {
             let nsError = error as NSError
             print("ARSession failed: \(nsError.localizedDescription) (code: \(nsError.code))")
@@ -306,16 +356,20 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
                 print("Restarting AR session due to world tracking failure")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                     self.arView?.session.run(config, options: [.resetTracking, .removeExistingAnchors])
-//                    self.startCameraCapture() // TODO: restart camera capture session
+                    
+                    // TEST: restart camera capture?
+//                    self.captureSession?.stopRunning()
+//                    self.captureSession = nil
+//                    self.startCameraCapture()
                 }
             } else {
                 print("Not restarting — unrecoverable sensor error")
             }
         }
 
-        func sessionWasInterrupted(_ session: ARSession) {
-            print("ARSession was interrupted")
-        }
+//        func sessionWasInterrupted(_ session: ARSession) {
+//            print("ARSession was interrupted")
+//        }
 
         func sessionInterruptionEnded(_ session: ARSession) {
             // Invoked when you toggle out of iOS app
@@ -327,6 +381,9 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
             config.planeDetection = [.horizontal]
             arView?.session.run(config, options: [.resetTracking, .removeExistingAnchors])
             
+            // TEST
+            self.captureSession?.stopRunning()
+            self.captureSession = nil
             startCameraCapture() // restart camera capture session
         }
         
