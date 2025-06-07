@@ -499,7 +499,7 @@ struct ARViewContainer: UIViewRepresentable {
                 text,
                 extrusionDepth: 0.004,
                 font: .systemFont(ofSize: 0.01),
-                containerFrame: CGRect(x: 0, y: 0, width: 0.4, height: 0.2),
+                containerFrame: CGRect(x: 0, y: 0, width: 0.25, height: 0.4),
                 alignment: .center,
                 lineBreakMode: .byWordWrapping
             )
@@ -512,8 +512,7 @@ struct ARViewContainer: UIViewRepresentable {
 
             let textSize = textMesh.bounds.extents
             let boxMesh = MeshResource.generatePlane(width: textSize.x * 1.1, height: textSize.y * 1.5)
-            var boxMaterial = SimpleMaterial()
-            boxMaterial.color = .init(tint: .black.withAlphaComponent(0.5))
+            let boxMaterial = SimpleMaterial(color: .white.withAlphaComponent(0.5), isMetallic: false)
             let boxEntity = ModelEntity(mesh: boxMesh, materials: [boxMaterial])
             boxEntity.position = [0, 0, 0]
 
