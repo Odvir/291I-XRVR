@@ -303,7 +303,7 @@ struct ARViewContainer: UIViewRepresentable {
 //                self.displayTextInAR("Snapshot captured.")
                 self.wrapper?.triggerFlash()
                 if let base64String = self.imageToBase64(image: image) {
-                    self.sendImageToOpenAI(base64Image: base64String) { bookTitle in
+                    self.sendImageToOpenAI(base64Image: base64String) { bookTitle, summaryText in
                         self.bookTitle = bookTitle  // store it for other features
 
 //                                DispatchQueue.main.async {
@@ -311,41 +311,38 @@ struct ARViewContainer: UIViewRepresentable {
 //                                }
                         guard let arView = self.arView else { return }
                         DispatchQueue.main.async {
+                            // ── Google Books lookup ──────────────────────────────────────────────────────
                             self.fetchBookInfo(for: bookTitle) { infoText, coverURL in
                                 DispatchQueue.main.async {
+                                    // 1️⃣ Spawn the 3-D book
                                     let bookEntity = self.createBookWithTitle(bookTitle)
                                     let cameraTransform = arView.cameraTransform
-                                    var position = cameraTransform.translation
-                                    position.z -= 0.4
-                                    let anchor = AnchorEntity(world: position)
-                                    // Always add the book
+                                    var position               = cameraTransform.translation
+                                    position.z                -= 0.4                         // 40 cm in front
+                                    let anchor                 = AnchorEntity(world: position)
                                     anchor.addChild(bookEntity)
+
+                                    // 2️⃣ Cover image  ⟶  if unavailable, use floating title text
                                     var titleEntity: Entity?
-                                    // Try cover image
-                                    if let url = coverURL,
-                                       let data = try? Data(contentsOf: url),
+                                    if let url   = coverURL,
+                                       let data  = try? Data(contentsOf: url),
                                        let image = UIImage(data: data) {
-                                        let imageEntity = self.createFloatingCoverImage(from: image)
-                                        titleEntity = imageEntity
+                                        titleEntity = self.createFloatingCoverImage(from: image)
                                     } else {
-                                        // Fallback: floating title
-                                        let fallback = self.createFloatingTitle(text: bookTitle, for: bookEntity)
-                                        titleEntity = fallback
+                                        titleEntity = self.createFloatingTitle(text: bookTitle,
+                                                                               for: bookEntity)
                                     }
-                                    if let titleEntity = titleEntity {
-                                        anchor.addChild(titleEntity)
-                                        let infoEntity = self.createFloatingInfo(text: infoText)
-                                        infoEntity.position = [
-                                            titleEntity.position.x,
-                                            titleEntity.position.y + 0.09,
-                                            titleEntity.position.z
-                                        ]
-                                        anchor.addChild(infoEntity)
-                                    }
+                                    if let titleEntity = titleEntity { anchor.addChild(titleEntity) }
+
+                                    // 3️⃣ Commit to the scene
                                     arView.scene.anchors.append(anchor)
-                                    self.bookAnchor = anchor
-//                                    self.textAnchor = anchor
+                                    self.bookAnchor           = anchor
                                     self.wrapper?.bookVisible = true
+
+                                    // 4️⃣ ONE combined pop-up: summary + ★-rating
+                                    let fullText = "\(summaryText)\n\(infoText)"   // e.g. “Percy Jackson…\n★ 4.3/5”
+                                    self.speakText(fullText)
+                                    self.displayTextInAR(fullText)
                                 }
                             }
                         }
@@ -740,7 +737,7 @@ struct ARViewContainer: UIViewRepresentable {
             guard let imageData = image.jpegData(compressionQuality: 0.8) else { return nil }
             return imageData.base64EncodedString()
         }
-        func sendImageToOpenAI(base64Image: String, completion: @escaping (String) -> Void) {
+        func sendImageToOpenAI(base64Image: String, completion: @escaping (String, String) -> Void) {
             guard let apiKey = ProcessInfo.processInfo.environment["API_KEY"] else {
                 print("API_KEY not found in environment variables.")
                 return
@@ -813,10 +810,10 @@ struct ARViewContainer: UIViewRepresentable {
                         // Extract title (everything before the first colon)
                         if let range = content.range(of: ":") {
                             let title = String(content[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-                            completion(title)  // Call the completion handler with the title
+                            completion(title, content)
                             self.bookTitle = title
                         } else {
-                            completion("Unknown Title")
+                            completion("Unknown Title", "No summary available.")
                         }
                         self.speakText(content)
                         DispatchQueue.main.async {
