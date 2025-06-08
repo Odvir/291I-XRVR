@@ -248,9 +248,9 @@ struct ARViewContainer: UIViewRepresentable {
                     self.sendImageToOpenAI(base64Image: base64String) { bookTitle in
                         self.bookTitle = bookTitle  // store it for other features
 
-                                DispatchQueue.main.async {
-                                    self.wrapper?.save(title: bookTitle)  // ✅ save only after title is ready
-                                }
+//                                DispatchQueue.main.async {
+//                                    self.wrapper?.save(title: bookTitle)  // ✅ save only after title is ready
+//                                }
                         guard let arView = self.arView else { return }
                         DispatchQueue.main.async {
                             self.fetchBookInfo(for: bookTitle) { infoText, coverURL in
@@ -286,7 +286,7 @@ struct ARViewContainer: UIViewRepresentable {
                                     }
                                     arView.scene.anchors.append(anchor)
                                     self.bookAnchor = anchor
-                                    self.textAnchor = anchor
+//                                    self.textAnchor = anchor
                                     self.wrapper?.bookVisible = true
                                 }
                             }

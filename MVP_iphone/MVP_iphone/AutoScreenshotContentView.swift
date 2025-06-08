@@ -65,12 +65,14 @@ struct AutoScreenshotContentView: View {
 class AutoCoordinatorWrapper: ObservableObject {
     @Published var bookVisible: Bool = false
     @Published var savedBooks: [String] = []
+    weak var coordinator: AutoScreenshotARViewContainer.Coordinator? 
     var lastBookTitle: String? = nil
 
     func saveLastBook() {
         if let title = lastBookTitle, !savedBooks.contains(title) {
             savedBooks.append(title)
         }
+        coordinator?.clearTextAnchor() // <-- remove text when book is saved
     }
 }
 
@@ -79,10 +81,11 @@ class AutoCoordinatorWrapper: ObservableObject {
 struct AutoScreenshotARViewContainer: UIViewRepresentable {
     var wrapper: AutoCoordinatorWrapper
 
-       func makeCoordinator() -> Coordinator {
-           let coordinator = Coordinator(wrapper: wrapper)
-           return coordinator
-       }
+    func makeCoordinator() -> Coordinator {
+        let coordinator = Coordinator(wrapper: wrapper)
+        wrapper.coordinator = coordinator // <-- assign reference
+        return coordinator
+    }
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
 
@@ -101,6 +104,7 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: ARView, context: Context) {}
+    
 
     // Handles camera and object detection logic
     class Coordinator: NSObject, ObjectDetectorLiveStreamDelegate, ARSessionDelegate {
@@ -145,6 +149,12 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
             } catch {
                 print("Failed to initialize ObjectDetector: \(error)")
             }
+        }
+        
+        func clearTextAnchor() {
+            guard let arView = arView, let anchor = textAnchor else { return }
+            arView.scene.anchors.remove(anchor)
+            self.textAnchor = nil
         }
 
         // Camera capture session
