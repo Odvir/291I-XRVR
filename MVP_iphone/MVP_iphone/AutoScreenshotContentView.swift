@@ -9,6 +9,9 @@ import UIKit
 struct AutoScreenshotContentView: View {
     @StateObject var wrapper = AutoCoordinatorWrapper()
     @State private var showLibrary = false
+    @AppStorage("ageRange") var ageRange: String = ""
+    @AppStorage("readingLevel") var readingLevel: String = ""
+    @State private var showSurvey = true
 
     var body: some View {
         ZStack {
@@ -58,6 +61,44 @@ struct AutoScreenshotContentView: View {
                 Button("Close") { showLibrary = false }
                     .padding()
             }
+        }
+        .sheet(isPresented: $showSurvey) {
+            VStack(spacing: 20) {
+                Text("Tell us about you!")
+                    .font(.title2)
+                    .bold()
+                    .padding(.top)
+
+                // Age Range
+                VStack(alignment: .leading) {
+                    Text("What's your age range?")
+                    Picker("Age", selection: $ageRange) {
+                        Text("0–12").tag("0–12")
+                        Text("12–24").tag("12–24")
+                        Text("24–50").tag("24–50")
+                        Text("50+").tag("50+")
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                // Reading Level
+                VStack(alignment: .leading) {
+                    Text("How much do you read?")
+                    Picker("Reading", selection: $readingLevel) {
+                        Text("Rarely").tag("rarely")
+                        Text("Often").tag("often")
+                        Text("Avid").tag("avid")
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                Button("Continue") {
+                    showSurvey = false
+                }
+                .disabled(ageRange.isEmpty || readingLevel.isEmpty)
+                .padding(.top)
+            }
+            .padding()
         }
     }
 }
@@ -237,20 +278,45 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
 
             let url = URL(string: "https://api.openai.com/v1/chat/completions")!
             var request = URLRequest(url: url)
+            let age = UserDefaults.standard.string(forKey: "ageRange") ?? "unknown age"
+            let reading = UserDefaults.standard.string(forKey: "readingLevel") ?? "unknown level"
+
             request.httpMethod = "POST"
             request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
             request.addValue("application/json", forHTTPHeaderField: "Content-Type")
 
             let body: [String: Any] = [
                 "model": "gpt-4o-mini",
-                "messages": [[
-                    "role": "user",
-                    "content": [
-                        ["type": "text", "text": "Identify the book in this image, then write a two-sentence description about it. Write it so that the book title goes first, then a colon, then the rest of the description. The book title should just be writtem like normal text."],
-                        ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64,\(base64Image)"]]
+                "messages": [
+                    [
+                        "role": "user",
+                        "content": [
+                            [
+                                "type": "text",
+                                "text": """
+                                Identify the book in this image, then write a two-sentence description about it. The reader is in the age range \(age) and reads \(reading). Tailor your tone, language, and suggestions to suit this reader.
+
+                                Respond in this format using line breaks:
+
+                                [Book Title]: [Two-sentence description]
+
+                                Vibe: [vibe]
+                                Similar Books:
+                                • [Book 1]
+                                • [Book 2]
+                                Example text:
+                                The Lightning Thief: A modern-day hero discovers his power and embarks on a mythological quest.
+                                Vibe: Whimsical
+                                Similar Books:
+                                • The Red Pyramid by Rick Riordan
+                                • Aru Shah and the End of Time by Roshani Chokshi
+                                """
+                            ],
+                            ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64,\(base64Image)"]]
+                        ]
                     ]
-                ]],
-                "max_tokens": 75
+                ],
+                "max_tokens": 300
             ]
 
             do {
