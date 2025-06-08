@@ -147,6 +147,11 @@ struct ARViewContainer: UIViewRepresentable {
         }
 
         func createBookWithTitle(_ title: String) -> Entity {
+            guard let arView = arView else  { return ModelEntity() }
+            // Remove the previous book anchor if it exists
+            if let oldAnchor = bookAnchor {
+                arView.scene.anchors.remove(oldAnchor)
+            }
             let bookEntity = try! Entity.loadModel(named: "Book")
             bookEntity.scale = [0.0007, 0.0007, 0.0007]
             bookEntity.orientation =
