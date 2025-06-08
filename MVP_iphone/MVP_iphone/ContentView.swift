@@ -221,37 +221,93 @@ struct ARViewContainer: UIViewRepresentable {
                 if let base64String = self.imageToBase64(image: image) {
                     self.sendImageToOpenAI(base64Image: base64String) { bookTitle in
                         guard let arView = self.arView else { return }
+
                         DispatchQueue.main.async {
-                            let bookEntity = self.createBookWithTitle(bookTitle)
-                            let titleEntity = self.createFloatingTitle(text: bookTitle, for: bookEntity)
-
-                            let cameraTransform = arView.cameraTransform
-                            var position = cameraTransform.translation
-                            position.z -= 0.4
-                            let anchor = AnchorEntity(world: position)
-
-                            self.fetchBookInfo(for: bookTitle) { infoText in
+                            self.fetchBookInfo(for: bookTitle) { infoText, coverURL in
                                 DispatchQueue.main.async {
-                                    let infoEntity = self.createFloatingInfo(text: infoText)
-                                    infoEntity.position = [titleEntity.position.x,
-                                                           titleEntity.position.y + 0.09,
-                                                           titleEntity.position.z]
-                                    anchor.addChild(infoEntity)
+                                    let bookEntity = self.createBookWithTitle(bookTitle)
+                                    let cameraTransform = arView.cameraTransform
+                                    var position = cameraTransform.translation
+                                    position.z -= 0.4
+                                    let anchor = AnchorEntity(world: position)
+
+                                    // Always add the book
+                                    anchor.addChild(bookEntity)
+
+                                    var titleEntity: Entity?
+
+                                    // Try cover image
+                                    if let url = coverURL,
+                                       let data = try? Data(contentsOf: url),
+                                       let image = UIImage(data: data) {
+                                        let imageEntity = self.createFloatingCoverImage(from: image)
+                                        titleEntity = imageEntity
+                                    } else {
+                                        // Fallback: floating title
+                                        let fallback = self.createFloatingTitle(text: bookTitle, for: bookEntity)
+                                        titleEntity = fallback
+                                    }
+
+                                    if let titleEntity = titleEntity {
+                                        anchor.addChild(titleEntity)
+
+                                        let infoEntity = self.createFloatingInfo(text: infoText)
+                                        infoEntity.position = [
+                                            titleEntity.position.x,
+                                            titleEntity.position.y + 0.09,
+                                            titleEntity.position.z
+                                        ]
+                                        anchor.addChild(infoEntity)
+                                    }
+
+                                    arView.scene.anchors.append(anchor)
+                                    self.bookAnchor = anchor
+                                    self.textAnchor = anchor
+                                    self.wrapper?.bookVisible = true
                                 }
                             }
-
-                            anchor.addChild(bookEntity)
-                            anchor.addChild(titleEntity)
-                            arView.scene.anchors.append(anchor)
-                            self.bookAnchor = anchor
-                            self.wrapper?.bookVisible = true
                         }
                     }
+
                 } else {
                     print("Failed to encode image.")
                 }
             }
         }
+        
+        func createFloatingCoverImage(from image: UIImage) -> Entity {
+            guard let cgImage = image.cgImage else {
+                print("❌ No CGImage found in UIImage")
+                return ModelEntity()
+            }
+
+            // Convert UIImage into a RealityKit texture
+            let texture: TextureResource
+            do {
+                texture = try TextureResource.generate(from: cgImage, options: .init(semantic: .color))
+            } catch {
+                print("❌ Failed to create texture: \(error)")
+                return ModelEntity()
+            }
+
+            // Apply texture to a flat rectangular plane
+            let width: Float = 0.14
+            let height: Float = 0.2
+            let mesh = MeshResource.generatePlane(width: width, height: height)
+
+            var material = UnlitMaterial()
+            material.baseColor = .texture(texture)
+
+            let imageEntity = ModelEntity(mesh: mesh, materials: [material])
+
+            // Position the image above the book
+            imageEntity.position = [0, 0.02, 0.01]
+            imageEntity.orientation = simd_quatf(angle: -.pi / 3.5, axis: [1, 0, 0])
+
+            return imageEntity
+        }
+
+
 
 //
 //        @objc func handleTap() {
@@ -415,26 +471,29 @@ struct ARViewContainer: UIViewRepresentable {
                 simd_quatf(angle: -.pi / 8, axis: [0, 0, 1])
             return bookEntity
         }
+        
 
-        func fetchBookInfo(for title: String, completion: @escaping (String) -> Void) {
+        func fetchBookInfo(for title: String, completion: @escaping (String, URL?) -> Void) {
             let query = title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
             let urlString = "https://www.googleapis.com/books/v1/volumes?q=intitle:\(query)&maxResults=1&printType=books"
             guard let url = URL(string: urlString) else {
-                completion("No extra info available.")
+                completion("No extra info available.", nil)
                 return
             }
 
             URLSession.shared.dataTask(with: url) { data, response, error in
                 if let error = error {
                     print("Books API error: \(error)")
-                    completion("Rating unavailable.")
+                    completion("Rating unavailable.", nil)
                     return
                 }
+
                 guard let data = data else {
                     print("Books API returned no data.")
-                    completion("Rating unavailable.")
+                    completion("Rating unavailable.", nil)
                     return
                 }
+
                 do {
                     if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                        let items = json["items"] as? [[String: Any]],
@@ -444,22 +503,37 @@ struct ARViewContainer: UIViewRepresentable {
                         let avg = volumeInfo["averageRating"] as? Double
                         let count = volumeInfo["ratingsCount"] as? Int ?? 0
                         var info = ""
+
                         if let avg = avg {
                             info += String(format: "★ %.1f/5", avg)
                             if count > 0 { info += " (\(count) ratings)" }
                         } else {
                             info += "No rating found"
                         }
-                        completion(info)
+
+                        // NEW: Extract image URL if available
+                        var imageURL: URL? = nil
+                        if let imageLinks = volumeInfo["imageLinks"] as? [String: Any],
+                           let thumbnail = imageLinks["thumbnail"] as? String {
+                            // Replace HTTP with HTTPS if necessary
+                            let secureURL = thumbnail.replacingOccurrences(of: "http://", with: "https://")
+                            imageURL = URL(string: secureURL)
+                        }
+
+                        completion(info, imageURL)
+
                     } else {
-                        completion("No extra info available.")
+                        completion("No extra info available.", nil)
                     }
+
                 } catch {
                     print("Books API JSON error: \(error)")
-                    completion("Rating unavailable.")
+                    completion("Rating unavailable.", nil)
                 }
+
             }.resume()
         }
+
         func detectBookCoverLocally(from originalImage: UIImage) {
             print("got called")
             guard let arView = arView else { return }
