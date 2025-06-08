@@ -15,55 +15,84 @@ struct ContentView: View {
             ARViewContainer(wrapper: wrapper)
                 .edgesIgnoringSafeArea(.all)
                 .overlay(
-                    VStack {
-                        Spacer()
-                        ZStack {
-                            // 📸 Center Camera Button
-                            Button(action: {
-                                wrapper.coordinator?.takeSnapshotAndAddBook()
-                            }) {
-                                ZStack {
-                                    Circle().fill(Color.gray.opacity(0.3)).frame(width: 60, height: 60)
-                                    Image(systemName: "camera.fill")
-                                        .font(.system(size: 26))
-                                        .foregroundColor(.black)
-                                }
-                            }
-                            
+                    ZStack {
+                        VStack {
+                            // 📚 Top-left: Library
                             HStack {
-                                // 📚 Bottom-left: Saved Library
                                 Button(action: {
                                     showLibrary = true
                                 }) {
-                                    ZStack {
-                                        Circle().fill(Color.gray.opacity(0.3)).frame(width: 50, height: 50)
-                                        Image(systemName: "books.vertical")
-                                            .font(.system(size: 22))
-                                            .foregroundColor(.blue)
-                                    }
+                                    Image(systemName: "books.vertical")
+                                        .font(.system(size: 24))
+                                        .padding(10)
+                                        .background(Color.gray.opacity(0.4))
+                                        .clipShape(Circle())
                                 }
-                                
                                 Spacer()
-                                
-                                // ❤️ Bottom-right: Heart button (only when visible)
+                            }
+                            .padding([.top, .leading], 20)
+
+                            Spacer()
+
+                            HStack {
+                                // ❌ Bottom-left: Dismiss button (appears only if book is visible)
+                                if wrapper.bookVisible {
+                                    Button(action: {
+                                        wrapper.dismiss()
+                                    }) {
+                                        Image(systemName: "xmark")
+                                            .font(.system(size: 24))
+                                            .foregroundColor(.black)
+                                            .padding(12)
+                                            .background(Color.gray.opacity(0.4))
+                                            .clipShape(Circle())
+                                    }
+                                    .padding(.leading, 30)
+                                } else {
+                                    Spacer().frame(width: 60) // keeps spacing when xmark is gone
+                                }
+
+                                Spacer()
+
+                                // 📷 Camera button (centered, not blue)
+                                Button(action: {
+                                    wrapper.takeSnapshot()
+                                }) {
+                                    Image(systemName: "camera")
+                                        .font(.system(size: 30))
+                                        .foregroundColor(.black)
+                                        .padding(20)
+                                        .background(Color.gray.opacity(0.4))
+                                        .clipShape(Circle())
+                                }
+
+                                Spacer()
+
+                                // ❤️ Bottom-right: Heart (appears only if book is visible)
                                 if wrapper.bookVisible {
                                     Button(action: {
                                         wrapper.animate()
                                     }) {
-                                        ZStack {
-                                            Circle().fill(Color.gray.opacity(0.3)).frame(width: 50, height: 50)
-                                            Image(systemName: "heart.fill")
-                                                .font(.system(size: 24))
-                                                .foregroundColor(.red)
-                                        }
+                                        Image(systemName: "heart.fill")
+                                            .font(.system(size: 28))
+                                            .foregroundColor(.red)
+                                            .padding(12)
+                                            .background(Color.gray.opacity(0.4))
+                                            .clipShape(Circle())
                                     }
+                                    .padding(.trailing, 30)
+                                } else {
+                                    Spacer().frame(width: 60)
                                 }
                             }
-                            .padding(.horizontal, 30)
+                            .padding(.bottom, 25)
                         }
-                        .padding(.bottom, 20)
+
+                        // Optional: screen flash overlay logic here
                     }
                 )
+
+
             
                 .sheet(isPresented: $showLibrary) {
                     VStack {
@@ -120,6 +149,9 @@ class CoordinatorWrapper: ObservableObject {
         DispatchQueue.main.async {
             self.flashToggle.toggle()
         }
+    }
+    func dismiss() {
+        coordinator?.dismissBookAndInfo()
     }
     @Published var flashToggle = false
     
@@ -275,6 +307,17 @@ struct ARViewContainer: UIViewRepresentable {
 //                }
 //            }
 //        }
+        func dismissBookAndInfo() {
+            if let bookAnchor = self.bookAnchor {
+                arView?.scene.anchors.remove(bookAnchor)
+                self.bookAnchor = nil
+            }
+            if let textAnchor = self.textAnchor {
+                arView?.scene.anchors.remove(textAnchor)
+                self.textAnchor = nil
+            }
+            self.wrapper?.bookVisible = false
+        }
         
         func animateBookToLibrary() {
             guard let bookAnchor = self.bookAnchor else {
@@ -284,7 +327,9 @@ struct ARViewContainer: UIViewRepresentable {
 
             let duration: TimeInterval = 2.0
             let moveDistance: Float = -0.5 // left on X-axis
-
+            if let textAnchor = self.textAnchor {
+                self.arView?.scene.anchors.remove(textAnchor)
+            }
             for child in bookAnchor.children {
                 let currentTransform = child.transform
                 var newTransform = currentTransform
@@ -704,12 +749,14 @@ struct ARViewContainer: UIViewRepresentable {
         func displayTextInAR(_ text: String) {
             guard let arView = arView else { return }
 
-            // Remove previous text anchor only
-            if let oldAnchor = textAnchor {
-                arView.scene.anchors.remove(oldAnchor)
-            }
+            // Remove previous text anchor if it exists
+                if let oldAnchor = textAnchor {
+                    arView.scene.anchors.remove(oldAnchor)
+                }
 
-            let anchor = AnchorEntity(world: [0, 0.3, -0.5])  // Position text 0.5m in front of camera
+            // 🔁 Create a NEW anchor each time (don't reuse)
+            let newAnchor = AnchorEntity(world: [0, 0.3, -0.5])  // This position looks straight ahead at 0.5m
+            textAnchor = newAnchor  // Update the reference *after* creating the new one
 
             let textMesh = MeshResource.generateText(
                 text,
@@ -733,11 +780,10 @@ struct ARViewContainer: UIViewRepresentable {
             boxEntity.position = [0, 0, 0]
 
             boxEntity.addChild(textEntity)
-            anchor.addChild(boxEntity)
+            newAnchor.addChild(boxEntity)
 
-            // Add new anchor and remember it
-            arView.scene.addAnchor(anchor)
-            textAnchor = anchor
+            // Add fresh anchor to scene
+            arView.scene.addAnchor(newAnchor)
         }
     }
 }
