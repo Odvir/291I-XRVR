@@ -872,40 +872,103 @@ struct ARViewContainer: UIViewRepresentable {
         }
     }
 }
+// ─────────────────────────────────────────────────────────────────────────────
+// REPLACE your entire old LibraryMapView with this one
+// ─────────────────────────────────────────────────────────────────────────────
 struct LibraryMapView: View {
     let books: [SavedBook]
     @Binding var isPresented: Bool
-    // Centre map on the most-recent capture or fallback to a default region
-    private var startRegion: MKCoordinateRegion {
-        if let last = books.last {
-            return .init(center: last.coordinate,
-                         span: .init(latitudeDelta: 0.05, longitudeDelta: 0.05))
-        } else {
-            // fallback to some neutral area if no books saved yet
-            return .init(center: CLLocationCoordinate2D(latitude: 0, longitude: 0),
-                         span: .init(latitudeDelta: 80, longitudeDelta: 80))
+    
+    // ── 1️⃣ Group books that share the *same* location (lat / long rounded to 4 dp) ──
+    private struct BookGroup: Identifiable {
+        let id = UUID()
+        let coordinate: CLLocationCoordinate2D
+        let books: [SavedBook]
+        
+        var label: String {                     // What the pin will say
+            books.count == 1 ? books.first!.title
+                             : "\(books.count) books"
         }
     }
+    // ── Book clusters (rounded lat/long) ────────────────────────────────────────
+    private var groups: [BookGroup] {
+        // 1. Helper to round a coordinate to 4-dp (≈ 11 m)
+        func rounded(_ c: CLLocationCoordinate2D) -> (Double, Double) {
+            let lat = (c.latitude  * 10_000).rounded() / 10_000
+            let lon = (c.longitude * 10_000).rounded() / 10_000
+            return (lat, lon)
+        }
+
+        // 2. Group books by that rounded coordinate  (String key = "lat,lon")
+        let keyed = Dictionary(grouping: books) { book -> String in
+            let (lat, lon) = rounded(book.coordinate)
+            return "\(lat),\(lon)"          // String is safely Hashable
+        }
+
+
+        // 3. Turn each dictionary value into a BookGroup
+        return keyed.values.map { chunk in
+            BookGroup(coordinate: chunk.first!.coordinate,
+                      books: Array(chunk))
+        }
+    }
+
+    
+    // ── 2️⃣ Region centres on last capture (fallback = world) ──
+    // ── Region centres on last capture (fallback = world) ───────────────────────
+    private var startRegion: MKCoordinateRegion {
+        if let last = books.last {
+            return MKCoordinateRegion(
+                center: last.coordinate,
+                span:   MKCoordinateSpan(latitudeDelta: 0.05,
+                                         longitudeDelta: 0.05))
+        } else {
+            return MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: 0, longitude: 0),
+                span:   MKCoordinateSpan(latitudeDelta: 80,
+                                         longitudeDelta: 80))
+        }
+    }
+    
+    // ── 3️⃣ Local UI state for showing a list sheet ──
+    @State private var selectedGroup: BookGroup?   // nil = no sheet
+    
     var body: some View {
         VStack(spacing: 0) {
-            // ── FULLSCREEN MAP ───────────────────────────────
+            // ── FULL-SCREEN MAP ────────────────────────────────────────────────
             Map(coordinateRegion: .constant(startRegion),
-                annotationItems: books) { entry in
-                MapAnnotation(coordinate: entry.coordinate) {
+                annotationItems: groups) { group in
+                
+                MapAnnotation(coordinate: group.coordinate) {
                     VStack(spacing: 2) {
                         Image(systemName: "book.fill")
                             .resizable()
                             .frame(width: 24, height: 24)
                             .foregroundColor(.blue)
-                        Text(entry.title)
+                        Text(group.label)
                             .font(.caption2)
                             .fixedSize()
                     }
+                    .onTapGesture {
+                        // If >1 book, show the list sheet.
+                        if group.books.count > 1 {
+                            selectedGroup = group
+                        } else if let first = group.books.first {
+                            // Otherwise jump straight to the single book.
+                            isPresented = false          // close map
+                            DispatchQueue.main.async {
+                                // Small delay so the map sheet dismisses smoothly
+                                NotificationCenter.default.post(
+                                    name: .init("ShowSavedBook"),
+                                    object: first)
+                            }
+                        }
+                    }
                 }
             }
-            .edgesIgnoringSafeArea(.top) // This prevents it from overlapping the close button
-
-            // ── BOTTOM CLOSE BUTTON ─────────────────────────
+            .edgesIgnoringSafeArea(.top)
+            
+            // ── BOTTOM CLOSE BUTTON ────────────────────────────────────────────
             Button(action: { isPresented = false }) {
                 Text("Close")
                     .frame(maxWidth: .infinity)
@@ -915,8 +978,37 @@ struct LibraryMapView: View {
                     .font(.headline)
             }
         }
+        // ── 4️⃣ Sheet that lists all books in a tapped cluster ────────────────
+        .sheet(item: $selectedGroup) { group in
+            VStack {
+                Text("Books at this location")
+                    .font(.title3).bold()
+                    .padding(.top)
+                List(group.books) { book in
+                    Button {
+                        // Dismiss both sheets & show the book in AR
+                        selectedGroup = nil
+                        isPresented = false
+                        DispatchQueue.main.async {
+                            NotificationCenter.default.post(
+                                name: .init("ShowSavedBook"),
+                                object: book)
+                        }
+                    } label: {
+                        HStack {
+                            Image(systemName: "book")
+                            Text(book.title)
+                        }
+                    }
+                }
+                Button("Close") { selectedGroup = nil }
+                    .padding()
+            }
+            .presentationDetents([.medium])
+        }
     }
 }
+
 #Preview {
     ContentView()
 }
