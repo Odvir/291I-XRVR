@@ -9,7 +9,9 @@ struct SavedBook: Identifiable, Hashable {
     let id = UUID()
     let title: String
     let coordinate: CLLocationCoordinate2D
+    let coverURL: URL?           // <-- new
     let date = Date()
+    
     static func == (lhs: SavedBook, rhs: SavedBook) -> Bool {
         lhs.id == rhs.id
     }
@@ -17,6 +19,7 @@ struct SavedBook: Identifiable, Hashable {
         hasher.combine(id)
     }
 }
+
 struct ContentView: View {
     @StateObject var wrapper = CoordinatorWrapper()
     @State private var showLibrary = false
@@ -113,17 +116,27 @@ struct ContentView: View {
                         Text("Saved Books")
                             .font(.title2)
                             .padding()
-                                        
-                        List(wrapper.savedBooks, id: \.self) { title in
-                            Text(title.title)
+
+                        List(wrapper.savedBooks) { book in
+                            Button(action: {
+                                showLibrary = false
+                                wrapper.showSavedBook(book)
+                            }) {
+                                HStack {
+                                    Image(systemName: "book.fill")
+                                        .foregroundColor(.blue)
+                                    Text(book.title)
+                                }
+                            }
                         }
-                                        
+
                         Button("Close") {
                             showLibrary = false
                         }
                         .padding()
-                        }
+                    }
                 }
+
                 .sheet(isPresented: $showMapSheet) {
                     LibraryMapView(
                         books: wrapper.savedBooks,
@@ -211,7 +224,7 @@ class CoordinatorWrapper: NSObject, ObservableObject, CLLocationManagerDelegate 
         if let coord = currentLocation?.coordinate {
             if let i = savedBooks.lastIndex(where: { $0.coordinate.latitude == 0 && $0.coordinate.longitude == 0 }) {
                 let old = savedBooks[i]
-                savedBooks[i] = SavedBook(title: old.title, coordinate: coord)
+                savedBooks[i] = SavedBook(title: old.title, coordinate: coord, coverURL: old.coverURL)
             }
         }
     }
@@ -224,16 +237,16 @@ class CoordinatorWrapper: NSObject, ObservableObject, CLLocationManagerDelegate 
     // -------------------------------------------------
     // Called by the coordinator when it knows the title
     // CoordinatorWrapper.swift
-    func save(title: String) {
-        let coord = currentLocation?.coordinate          // may be nil
-                    ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
+    func save(title: String, coverURL: URL?) {
+        let coord = currentLocation?.coordinate ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
+        let entry = SavedBook(title: title, coordinate: coord, coverURL: coverURL)
 
-        let entry = SavedBook(title: title, coordinate: coord)
-
-        // avoid duplicates by title (ids are new every time)
         if !savedBooks.contains(where: { $0.title == title }) {
             savedBooks.append(entry)
         }
+    }
+    func showSavedBook(_ book: SavedBook) {
+        coordinator?.displaySavedBook(book)
     }
 
 }
@@ -265,6 +278,7 @@ struct ARViewContainer: UIViewRepresentable {
         var textAnchor: AnchorEntity?
         var bookAnchor: AnchorEntity?
         var bookTitle: String?
+        var currentCoverURL: URL?
         weak var wrapper: CoordinatorWrapper?
             init(wrapper: CoordinatorWrapper) {
                 self.wrapper = wrapper
@@ -364,60 +378,55 @@ struct ARViewContainer: UIViewRepresentable {
             imageEntity.orientation = simd_quatf(angle: -.pi / 3.5, axis: [1, 0, 0])
             return imageEntity
         }
-//
-//        @objc func handleTap() {
-//            guard let arView = arView else { return }
-//
-//            let now = Date()
-//            if now.timeIntervalSince(lastTapTime) < cooldownDuration {
-//                print("Cooldown active. Please wait...")
-//                return
-//            }
-//            lastTapTime = now
-//
-//            arView.snapshot(saveToHDR: false) { optionalImage in
-//                guard let image = optionalImage else {
-//                    print("Snapshot failed.")
-//                    return
-//                }
-//
-//                print("Snapshot taken.")
-//                self.displayTextInAR("Snapshot captured.")
-//
-//                if let base64String = self.imageToBase64(image: image) {
-//                    self.sendImageToOpenAI(base64Image: base64String) { bookTitle in
-//                        guard let arView = self.arView else { return }
-//                        DispatchQueue.main.async {
-//                            let bookEntity = self.createBookWithTitle(bookTitle)
-//                            let titleEntity = self.createFloatingTitle(text: bookTitle, for: bookEntity)
-//
-//                            let cameraTransform = arView.cameraTransform
-//                            var position = cameraTransform.translation
-//                            position.z -= 0.4
-//                            let anchor = AnchorEntity(world: position)
-//                            self.fetchBookInfo(for: bookTitle) { infoText in
-//                                DispatchQueue.main.async {
-//                                    let infoEntity = self.createFloatingInfo(text: infoText)
-//                                    infoEntity.position = [titleEntity.position.x,
-//                                                           titleEntity.position.y + 0.09,
-//                                                           titleEntity.position.z]
-//                                    anchor.addChild(infoEntity)
-//                                }
-//                            }
-//                            anchor.addChild(bookEntity)
-//                            anchor.addChild(titleEntity)
-//
-//                            arView.scene.anchors.append(anchor)
-//                            self.bookAnchor = anchor
-//                            self.wrapper!.bookVisible = true// <-- Set visible
-//
-//                        }
-//                    }
-//                } else {
-//                    print("Failed to encode image.")
-//                }
-//            }
-//        }
+        
+        func displaySavedBook(_ book: SavedBook) {
+            guard let arView = arView else { return }
+
+            // Remove existing anchors
+            if let bookAnchor = self.bookAnchor {
+                arView.scene.anchors.remove(bookAnchor)
+            }
+
+            let bookEntity = createBookWithTitle(book.title)
+            let cameraTransform = arView.cameraTransform
+            var position = cameraTransform.translation
+            position.z -= 0.4
+
+            let anchor = AnchorEntity(world: position)
+            anchor.addChild(bookEntity)
+
+            if let url = book.coverURL,
+               let data = try? Data(contentsOf: url),
+               let image = UIImage(data: data) {
+                let coverEntity = createFloatingCoverImage(from: image)
+                anchor.addChild(coverEntity)
+
+                let infoEntity = createFloatingInfo(text: "Saved book")
+                infoEntity.position = [
+                    coverEntity.position.x,
+                    coverEntity.position.y + 0.09,
+                    coverEntity.position.z
+                ]
+                anchor.addChild(infoEntity)
+            } else {
+                let titleEntity = createFloatingTitle(text: book.title, for: bookEntity)
+                anchor.addChild(titleEntity)
+
+                let infoEntity = createFloatingInfo(text: "Saved book")
+                infoEntity.position = [
+                    titleEntity.position.x,
+                    titleEntity.position.y + 0.09,
+                    titleEntity.position.z
+                ]
+                anchor.addChild(infoEntity)
+            }
+
+            arView.scene.anchors.append(anchor)
+            self.bookAnchor = anchor
+            self.wrapper?.bookVisible = true
+        }
+
+
         func dismissBookAndInfo() {
             if let bookAnchor = self.bookAnchor {
                 arView?.scene.anchors.remove(bookAnchor)
@@ -448,7 +457,7 @@ struct ARViewContainer: UIViewRepresentable {
                 child.move(to: newTransform, relativeTo: nil, duration: duration, timingFunction: .easeInOut)
             }
             if let title = bookTitle {
-                wrapper?.save(title: title)
+                wrapper?.save(title: title, coverURL: currentCoverURL)
             } // <-- save it
             // Remove after animation finishes
             // Remove after animation finishes
@@ -556,7 +565,7 @@ struct ARViewContainer: UIViewRepresentable {
                             // Replace HTTP with HTTPS if necessary
                             let secureURL = thumbnail.replacingOccurrences(of: "http://", with: "https://")
                             imageURL = URL(string: secureURL)
-                        }
+                            self.currentCoverURL = imageURL                        }
                         completion(info, imageURL)
                     } else {
                         completion("No extra info available.", nil)
