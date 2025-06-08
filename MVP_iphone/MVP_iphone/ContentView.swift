@@ -76,8 +76,9 @@ struct ContentView: View {
                                 // Side buttons float left / right
                                 HStack {
                                     // ❌ Dismiss (left)
-                                    if wrapper.bookVisible {
-                                        Button(action: { wrapper.dismiss() }) {
+                                    if wrapper.bookVisible || wrapper.isViewingSavedBook {
+                                        Button(action: { wrapper.dismiss()
+                                            wrapper.isViewingSavedBook = false }) {
                                             Image(systemName: "xmark")
                                                 .font(.system(size: 24))
                                                 .foregroundColor(.black)
@@ -209,6 +210,7 @@ class CoordinatorWrapper: NSObject, ObservableObject, CLLocationManagerDelegate 
     @Published var flashToggle = false
     // Library
     @Published var savedBooks: [SavedBook] = []
+    @Published var isViewingSavedBook = false
     // -------------------------------------------------
     override init() {
         super.init()
@@ -246,6 +248,7 @@ class CoordinatorWrapper: NSObject, ObservableObject, CLLocationManagerDelegate 
         }
     }
     func showSavedBook(_ book: SavedBook) {
+        isViewingSavedBook = true
         coordinator?.displaySavedBook(book)
     }
 
@@ -423,7 +426,6 @@ struct ARViewContainer: UIViewRepresentable {
 
             arView.scene.anchors.append(anchor)
             self.bookAnchor = anchor
-            self.wrapper?.bookVisible = true
         }
 
 
