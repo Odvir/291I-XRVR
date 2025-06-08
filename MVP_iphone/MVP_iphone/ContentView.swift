@@ -5,13 +5,89 @@ import AVFoundation
 import Vision
 
 struct ContentView: View {
+    @StateObject var wrapper = CoordinatorWrapper()
+    @State private var showLibrary = false
+
     var body: some View {
-        ARViewContainer()
+        ARViewContainer(wrapper: wrapper)
             .edgesIgnoringSafeArea(.all)
+            .overlay(
+                VStack {
+                    Spacer()
+                    HStack {
+                        // 📚 Bottom-left: Saved Library
+                        Button(action: {
+                            showLibrary = true
+                        }) {
+                            Image(systemName: "books.vertical")
+                                .font(.system(size: 28))
+                                .foregroundColor(.blue)
+                                .padding()
+                        }
+
+                        Spacer()
+
+                        // ❤️ Bottom-right: Heart button
+                        if wrapper.bookVisible {
+                            Button(action: {
+                                wrapper.animate()
+                            }) {
+                                Image(systemName: "heart.fill")
+                                    .font(.system(size: 30))
+                                    .foregroundColor(.red)
+                                    .padding()
+                            }
+                        }
+                    }
+                }
+            )
+            .sheet(isPresented: $showLibrary) {
+                VStack {
+                    Text("Saved Books")
+                        .font(.title2)
+                        .padding()
+
+                    List(wrapper.savedBooks, id: \.self) { title in
+                        Text(title)
+                    }
+
+                    Button("Close") {
+                        showLibrary = false
+                    }
+                    .padding()
+                }
+            }
     }
 }
 
+class CoordinatorWrapper: ObservableObject {
+    var coordinator: ARViewContainer.Coordinator?
+
+    @Published var bookVisible: Bool = false
+    @Published var savedBooks: [String] = []
+
+    func animate() {
+        coordinator?.animateBookToLibrary()
+    }
+    
+    func save(title: String) {
+            if !savedBooks.contains(title) {
+                savedBooks.append(title)
+            }
+        }
+    
+}
+
+
+
 struct ARViewContainer: UIViewRepresentable {
+    var wrapper: CoordinatorWrapper  // ✅ Add this
+
+    func makeCoordinator() -> Coordinator {
+        let coordinator = Coordinator(wrapper: wrapper)
+        wrapper.coordinator = coordinator  // ✅ Link it
+        return coordinator
+    }
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
 
@@ -31,16 +107,18 @@ struct ARViewContainer: UIViewRepresentable {
 
     func updateUIView(_ uiView: ARView, context: Context) {}
 
-    func makeCoordinator() -> Coordinator {
-        return Coordinator()
-    }
-
     class Coordinator: NSObject {
         weak var arView: ARView?
         var lastTapTime: Date = Date(timeIntervalSince1970: 0)
         let cooldownDuration: TimeInterval = 15 // seconds
         var textAnchor: AnchorEntity?
         var bookAnchor: AnchorEntity?
+        var bookTitle: String?
+        weak var wrapper: CoordinatorWrapper?
+
+            init(wrapper: CoordinatorWrapper) {
+                self.wrapper = wrapper
+            }
 
         @objc func handleTap() {
             guard let arView = arView else { return }
@@ -86,6 +164,7 @@ struct ARViewContainer: UIViewRepresentable {
 
                             arView.scene.anchors.append(anchor)
                             self.bookAnchor = anchor
+                            self.wrapper!.bookVisible = true// <-- Set visible
 
                         }
                     }
@@ -94,6 +173,35 @@ struct ARViewContainer: UIViewRepresentable {
                 }
             }
         }
+        
+        func animateBookToLibrary() {
+            guard let bookAnchor = self.bookAnchor else {
+                print("No book anchor to animate.")
+                return
+            }
+
+            let duration: TimeInterval = 2.0
+            let moveDistance: Float = -0.5 // left on X-axis
+
+            for child in bookAnchor.children {
+                let currentTransform = child.transform
+                var newTransform = currentTransform
+                newTransform.translation.x += moveDistance
+                
+                child.move(to: newTransform, relativeTo: nil, duration: duration, timingFunction: .easeInOut)
+            }
+            if let title = bookTitle {
+                wrapper?.save(title: title)
+            } // <-- save it
+            // Remove after animation finishes
+            // Remove after animation finishes
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.5) {
+                self.arView?.scene.anchors.remove(bookAnchor)
+                self.bookAnchor = nil
+                self.wrapper?.bookVisible = false // set hidden
+            }
+        }
+
 
         func createFloatingTitle(text: String, for bookEntity: Entity) -> Entity {
             guard let model = bookEntity.components[ModelComponent.self] else {
@@ -459,6 +567,7 @@ struct ARViewContainer: UIViewRepresentable {
                         if let range = content.range(of: ":") {
                             let title = String(content[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
                             completion(title)  // Call the completion handler with the title
+                            self.bookTitle = title
                         } else {
                             completion("Unknown Title")
                         }
