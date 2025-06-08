@@ -32,52 +32,20 @@ struct ContentView: View {
                 .overlay(
                     ZStack {
                         VStack {
-                            // 📚 Top-left: Library
+                            // ── TOP BAR ──────────────────────────────────────────────
                             HStack {
-                                Button(action: {
-                                    showLibrary = true
-                                }) {
+                                // 📚 Library (top-left)
+                                Button(action: { showLibrary = true }) {
                                     Image(systemName: "books.vertical")
                                         .font(.system(size: 24))
                                         .padding(10)
                                         .background(Color.gray.opacity(0.4))
                                         .clipShape(Circle())
                                 }
+
                                 Spacer()
-                            }
-                            .padding([.top, .leading], 20)
-                            Spacer()
-                            HStack {
-                                // ❌ Bottom-left: Dismiss button (appears only if book is visible)
-                                if wrapper.bookVisible {
-                                    Button(action: {
-                                        wrapper.dismiss()
-                                    }) {
-                                        Image(systemName: "xmark")
-                                            .font(.system(size: 24))
-                                            .foregroundColor(.black)
-                                            .padding(12)
-                                            .background(Color.gray.opacity(0.4))
-                                            .clipShape(Circle())
-                                    }
-                                    .padding(.leading, 30)
-                                } else {
-                                    Spacer().frame(width: 60) // keeps spacing when xmark is gone
-                                }
-                                Spacer()
-                                // 📷 Camera button (centered, not blue)
-                                Button(action: {
-                                    wrapper.takeSnapshot()
-                                }) {
-                                    Image(systemName: "camera")
-                                        .font(.system(size: 30))
-                                        .foregroundColor(.black)
-                                        .padding(20)
-                                        .background(Color.gray.opacity(0.4))
-                                        .clipShape(Circle())
-                                }
-                                Spacer()
-                                
+
+                                // 🗺️ Map (top-right)
                                 Button(action: { showMapSheet = true }) {
                                     Image(systemName: "map")
                                         .font(.system(size: 24))
@@ -85,44 +53,76 @@ struct ContentView: View {
                                         .background(Color.gray.opacity(0.4))
                                         .clipShape(Circle())
                                 }
-                                // ❤️ Bottom-right: Heart (appears only if book is visible)
-                                if wrapper.bookVisible {
-                                    Button(action: {
-                                        wrapper.animate()
-                                    }) {
-                                        Image(systemName: "heart.fill")
-                                            .font(.system(size: 28))
-                                            .foregroundColor(.red)
-                                            .padding(12)
-                                            .background(Color.gray.opacity(0.4))
-                                            .clipShape(Circle())
-                                    }
-                                    .padding(.trailing, 30)
-                                } else {
-                                    Spacer().frame(width: 60)
+                            }
+                            .padding([.top, .horizontal], 20)
+
+                            Spacer()
+
+                            // ── BOTTOM BAR  ──────────────────────────────────────────
+                            ZStack {
+                                // 📷 Camera — always visually centred
+                                Button(action: { wrapper.takeSnapshot() }) {
+                                    Image(systemName: "camera")
+                                        .font(.system(size: 30))
+                                        .foregroundColor(.black)
+                                        .padding(20)
+                                        .background(Color.gray.opacity(0.4))
+                                        .clipShape(Circle())
                                 }
+
+                                // Side buttons float left / right
+                                HStack {
+                                    // ❌ Dismiss (left)
+                                    if wrapper.bookVisible {
+                                        Button(action: { wrapper.dismiss() }) {
+                                            Image(systemName: "xmark")
+                                                .font(.system(size: 24))
+                                                .foregroundColor(.black)
+                                                .padding(12)
+                                                .background(Color.gray.opacity(0.4))
+                                                .clipShape(Circle())
+                                        }
+                                    } else {
+                                        Spacer().frame(width: 60)   // reserve the same width when hidden
+                                    }
+
+                                    Spacer()
+
+                                    // ❤️ Heart (right)
+                                    if wrapper.bookVisible {
+                                        Button(action: { wrapper.animate() }) {
+                                            Image(systemName: "heart.fill")
+                                                .font(.system(size: 28))
+                                                .foregroundColor(.red)
+                                                .padding(12)
+                                                .background(Color.gray.opacity(0.4))
+                                                .clipShape(Circle())
+                                        }
+                                    } else {
+                                        Spacer().frame(width: 60)
+                                    }
+                                }
+                                .padding(.horizontal, 30)
                             }
                             .padding(.bottom, 25)
                         }
-                        // Optional: screen flash overlay logic here
                     }
                 )
-            
                 .sheet(isPresented: $showLibrary) {
                     VStack {
                         Text("Saved Books")
                             .font(.title2)
                             .padding()
-                        
+                                        
                         List(wrapper.savedBooks, id: \.self) { title in
                             Text(title.title)
                         }
-                        
+                                        
                         Button("Close") {
                             showLibrary = false
                         }
                         .padding()
-                    }
+                        }
                 }
                 .sheet(isPresented: $showMapSheet) {
                     LibraryMapView(
@@ -168,7 +168,6 @@ struct ContentView: View {
                     }
                     .padding()
                 }
-
 
                 .onChange(of: wrapper.flashToggle) { _ in
                     showFlash = true
@@ -743,7 +742,6 @@ struct ARViewContainer: UIViewRepresentable {
             request.addValue("application/json", forHTTPHeaderField: "Content-Type")
             let age = UserDefaults.standard.string(forKey: "ageRange") ?? "any"
             let reading = UserDefaults.standard.string(forKey: "readingLevel") ?? "any"
-
             let body: [String: Any] = [
                 "model": "gpt-4o-mini",
                 "messages": [
@@ -777,7 +775,6 @@ struct ARViewContainer: UIViewRepresentable {
                 ],
                 "max_tokens": 300
             ]
-
             // Send request to OpenAI API
             do {
                 let jsonData = try JSONSerialization.data(withJSONObject: body)
@@ -882,21 +879,34 @@ struct LibraryMapView: View {
         }
     }
     var body: some View {
-        Map(coordinateRegion: .constant(startRegion),
-            annotationItems: books) { entry in
-            MapAnnotation(coordinate: entry.coordinate) {
-                VStack(spacing: 2) {
-                    Image(systemName: "book.fill")
-                        .resizable()
-                        .frame(width: 24, height: 24)
-                        .foregroundColor(.blue)
-                    Text(entry.title)
-                        .font(.caption2)
-                        .fixedSize()
+        VStack(spacing: 0) {
+            // ── FULLSCREEN MAP ───────────────────────────────
+            Map(coordinateRegion: .constant(startRegion),
+                annotationItems: books) { entry in
+                MapAnnotation(coordinate: entry.coordinate) {
+                    VStack(spacing: 2) {
+                        Image(systemName: "book.fill")
+                            .resizable()
+                            .frame(width: 24, height: 24)
+                            .foregroundColor(.blue)
+                        Text(entry.title)
+                            .font(.caption2)
+                            .fixedSize()
+                    }
                 }
             }
+            .edgesIgnoringSafeArea(.top) // This prevents it from overlapping the close button
+
+            // ── BOTTOM CLOSE BUTTON ─────────────────────────
+            Button(action: { isPresented = false }) {
+                Text("Close")
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color(.systemGray5))
+                    .foregroundColor(.blue)
+                    .font(.headline)
+            }
         }
-        .edgesIgnoringSafeArea(.all)
     }
 }
 #Preview {
