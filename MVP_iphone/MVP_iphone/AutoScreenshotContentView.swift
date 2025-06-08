@@ -7,16 +7,81 @@ import MediaPipeTasksVision
 import UIKit
 
 struct AutoScreenshotContentView: View {
+    @StateObject var wrapper = AutoCoordinatorWrapper()
+    @State private var showLibrary = false
+
     var body: some View {
-        AutoScreenshotARViewContainer()
-            .edgesIgnoringSafeArea(.all)
+        ZStack {
+            AutoScreenshotARViewContainer(wrapper: wrapper)
+
+            VStack {
+                Spacer()
+                HStack {
+                    // 📚 Bottom-left
+                    Button(action: { showLibrary = true }) {
+                        Image(systemName: "books.vertical")
+                            .font(.system(size: 24))
+                            .padding(10)
+                            .background(Color.gray.opacity(0.4))
+                            .clipShape(Circle())
+                    }
+
+                    Spacer()
+
+                    // ❤️ Bottom-right
+                    if wrapper.bookVisible {
+                        Button(action: {
+                            wrapper.saveLastBook()
+                            wrapper.bookVisible = false
+                        }) {
+                            Image(systemName: "heart.fill")
+                                .font(.system(size: 28))
+                                .foregroundColor(.red)
+                                .padding(12)
+                                .background(Color.gray.opacity(0.4))
+                                .clipShape(Circle())
+                        }
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showLibrary) {
+            VStack {
+                Text("Saved Books")
+                    .font(.title2)
+                    .padding()
+
+                List(wrapper.savedBooks, id: \.self) { title in
+                    Text(title)
+                }
+
+                Button("Close") { showLibrary = false }
+                    .padding()
+            }
+        }
     }
 }
+class AutoCoordinatorWrapper: ObservableObject {
+    @Published var bookVisible: Bool = false
+    @Published var savedBooks: [String] = []
+    weak var coordinator: AutoScreenshotARViewContainer.Coordinator?
+    var lastBookTitle: String? = nil
 
-struct AutoScreenshotARViewContainer: UIViewRepresentable {
-    func makeCoordinator() -> Coordinator {
-        return Coordinator()
+    func saveLastBook() {
+        if let title = lastBookTitle, !savedBooks.contains(title) {
+            savedBooks.append(title)
+        }
+        coordinator?.clearTextAnchor() // <-- remove text when book is saved
     }
+}
+struct AutoScreenshotARViewContainer: UIViewRepresentable {
+    var wrapper: AutoCoordinatorWrapper
+    func makeCoordinator() -> Coordinator {
+        let coordinator = Coordinator(wrapper: wrapper)
+        wrapper.coordinator = coordinator
+        return coordinator
+    }
+
 
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
@@ -44,6 +109,11 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
         
         private var lastOpenAICallTime: TimeInterval = 0
         private let openAICooldown: TimeInterval = 10.0 // seconds
+        weak var wrapper: AutoCoordinatorWrapper?
+
+        init(wrapper: AutoCoordinatorWrapper) {
+            self.wrapper = wrapper
+        }
         
         var textAnchor: AnchorEntity?
 
@@ -65,6 +135,11 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
                 print("❌ Failed to initialize ObjectDetector: \(error)")
             }
         }
+        func clearTextAnchor() {
+                    guard let arView = arView, let anchor = textAnchor else { return }
+                    arView.scene.anchors.remove(anchor)
+                    self.textAnchor = nil
+                }
 
         func session(_ session: ARSession, didUpdate frame: ARFrame) {
             let now = Date().timeIntervalSince1970
@@ -197,10 +272,27 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
                        let choices = json["choices"] as? [[String: Any]],
                        let message = choices.first?["message"] as? [String: Any],
                        let content = message["content"] as? String {
-                        print("OpenAI Response: \(content)")
-                        completion(content)
+
+                        print("\n=== OpenAI Response ===\n\(content)\n========================")
+
+                        // Extract title (everything before the first colon)
+                        if let range = content.range(of: ":") {
+                            let title = String(content[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                            self.wrapper?.lastBookTitle = title
+                            self.wrapper?.bookVisible = true
+                            completion(title)  // Call the completion handler with the title
+                        } else {
+                            completion("Unknown Title")
+                        }
+                        
+                        DispatchQueue.main.async {
+                            self.displayTextInAR(content)
+                        }
                     } else {
-                        print("Failed to parse OpenAI response")
+                        print("Could not parse OpenAI response.")
+                        if let jsonString = String(data: data, encoding: .utf8) {
+                            print("Response JSON: \(jsonString)")
+                        }
                     }
                 } catch {
                     print("JSON parsing error: \(error)")
