@@ -173,12 +173,6 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
             ]
             
-//            output.setSampleBufferDelegate(self, queue: DispatchQueue(label: "camera_queue"))
-//            captureSession.addOutput(output)
-//
-//            captureSession.startRunning() // run camera session async
-//            print("Camera started")
-            
             // Delay detection for 2 seconds to prevent immediate detections, handle in background thread
             DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 2.0) {
                 output.setSampleBufferDelegate(self, queue: DispatchQueue(label: "camera_queue"))
@@ -379,12 +373,12 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
                 arView.scene.anchors.remove(oldAnchor)
             }
 
-            let anchor = AnchorEntity(world: [0, 0, -0.5])  // Position text 0.5m in front of camera
+            let anchor = AnchorEntity(world: [0, -0.15, -0.5])  // Position text 0.5m in front of camera
 
             let textMesh = MeshResource.generateText(
                 text,
                 extrusionDepth: 0.004,
-                font: .systemFont(ofSize: 0.01),
+                font: .systemFont(ofSize: 0.015),
                 containerFrame: CGRect(x: 0, y: 0, width: 0.25, height: 0.4),
                 alignment: .center,
                 lineBreakMode: .byWordWrapping
@@ -399,7 +393,7 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
             let textSize = textMesh.bounds.extents
             let boxMesh = MeshResource.generatePlane(width: textSize.x * 1.1, height: textSize.y * 1.5)
             var boxMaterial = SimpleMaterial()
-            boxMaterial.color = .init(tint: .black.withAlphaComponent(0.5))
+            boxMaterial.color = .init(tint: .white.withAlphaComponent(0.5))
             let boxEntity = ModelEntity(mesh: boxMesh, materials: [boxMaterial])
             boxEntity.position = [0, 0, 0]
 
