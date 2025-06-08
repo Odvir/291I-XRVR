@@ -10,14 +10,79 @@ import UIKit
 
 // Main SwiftUI view
 struct AutoScreenshotContentView: View {
+    @StateObject var wrapper = AutoCoordinatorWrapper()
+    @State private var showLibrary = false
+
     var body: some View {
-        AutoScreenshotARViewContainer()
-            .edgesIgnoringSafeArea(.all)
+        ZStack {
+            AutoScreenshotARViewContainer(wrapper: wrapper)
+
+            VStack {
+                Spacer()
+                HStack {
+                    // 📚 Bottom-left
+                    Button(action: { showLibrary = true }) {
+                        Image(systemName: "books.vertical")
+                            .font(.system(size: 28))
+                            .foregroundColor(.blue)
+                            .padding()
+                    }
+
+                    Spacer()
+
+                    // ❤️ Bottom-right
+                    if wrapper.bookVisible {
+                        Button(action: {
+                            wrapper.saveLastBook()
+                            wrapper.bookVisible = false
+                        }) {
+                            Image(systemName: "heart.fill")
+                                .font(.system(size: 30))
+                                .foregroundColor(.red)
+                                .padding()
+                        }
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showLibrary) {
+            VStack {
+                Text("Saved Books")
+                    .font(.title2)
+                    .padding()
+
+                List(wrapper.savedBooks, id: \.self) { title in
+                    Text(title)
+                }
+
+                Button("Close") { showLibrary = false }
+                    .padding()
+            }
+        }
     }
 }
 
+class AutoCoordinatorWrapper: ObservableObject {
+    @Published var bookVisible: Bool = false
+    @Published var savedBooks: [String] = []
+    var lastBookTitle: String? = nil
+
+    func saveLastBook() {
+        if let title = lastBookTitle, !savedBooks.contains(title) {
+            savedBooks.append(title)
+        }
+    }
+}
+
+
 // Embed UIKit views (ARView) into SwiftUI
 struct AutoScreenshotARViewContainer: UIViewRepresentable {
+    var wrapper: AutoCoordinatorWrapper
+
+       func makeCoordinator() -> Coordinator {
+           let coordinator = Coordinator(wrapper: wrapper)
+           return coordinator
+       }
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
 
@@ -37,13 +102,14 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
 
     func updateUIView(_ uiView: ARView, context: Context) {}
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
     // Handles camera and object detection logic
     class Coordinator: NSObject, ObjectDetectorLiveStreamDelegate, ARSessionDelegate {
         weak var arView: ARView?
+        weak var wrapper: AutoCoordinatorWrapper?
+
+        init(wrapper: AutoCoordinatorWrapper) {
+            self.wrapper = wrapper
+        }
 
         private var objectDetector: ObjectDetector? // MediaPipe object detector instance
         private var captureSession: AVCaptureSession? // Camera capture session
@@ -275,6 +341,8 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
                         // Extract title (everything before the first colon)
                         if let range = content.range(of: ":") {
                             let title = String(content[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                            self.wrapper?.lastBookTitle = title
+                            self.wrapper?.bookVisible = true
                             completion(title)  // Call the completion handler with the title
                         } else {
                             completion("Unknown Title")

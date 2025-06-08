@@ -7,56 +7,94 @@ import Vision
 struct ContentView: View {
     @StateObject var wrapper = CoordinatorWrapper()
     @State private var showLibrary = false
+    @State private var showFlash = false
+
 
     var body: some View {
-        ARViewContainer(wrapper: wrapper)
-            .edgesIgnoringSafeArea(.all)
-            .overlay(
-                VStack {
-                    Spacer()
-                    HStack {
-                        // 📚 Bottom-left: Saved Library
-                        Button(action: {
-                            showLibrary = true
-                        }) {
-                            Image(systemName: "books.vertical")
-                                .font(.system(size: 28))
-                                .foregroundColor(.blue)
-                                .padding()
-                        }
-
+        ZStack {
+            ARViewContainer(wrapper: wrapper)
+                .edgesIgnoringSafeArea(.all)
+                .overlay(
+                    VStack {
                         Spacer()
-
-                        // ❤️ Bottom-right: Heart button
-                        if wrapper.bookVisible {
+                        ZStack {
+                            // 📸 Center Camera Button
                             Button(action: {
-                                wrapper.animate()
+                                wrapper.coordinator?.takeSnapshotAndAddBook()
                             }) {
-                                Image(systemName: "heart.fill")
-                                    .font(.system(size: 30))
-                                    .foregroundColor(.red)
-                                    .padding()
+                                ZStack {
+                                    Circle().fill(Color.gray.opacity(0.3)).frame(width: 60, height: 60)
+                                    Image(systemName: "camera.fill")
+                                        .font(.system(size: 26))
+                                        .foregroundColor(.black)
+                                }
                             }
+                            
+                            HStack {
+                                // 📚 Bottom-left: Saved Library
+                                Button(action: {
+                                    showLibrary = true
+                                }) {
+                                    ZStack {
+                                        Circle().fill(Color.gray.opacity(0.3)).frame(width: 50, height: 50)
+                                        Image(systemName: "books.vertical")
+                                            .font(.system(size: 22))
+                                            .foregroundColor(.blue)
+                                    }
+                                }
+                                
+                                Spacer()
+                                
+                                // ❤️ Bottom-right: Heart button (only when visible)
+                                if wrapper.bookVisible {
+                                    Button(action: {
+                                        wrapper.animate()
+                                    }) {
+                                        ZStack {
+                                            Circle().fill(Color.gray.opacity(0.3)).frame(width: 50, height: 50)
+                                            Image(systemName: "heart.fill")
+                                                .font(.system(size: 24))
+                                                .foregroundColor(.red)
+                                        }
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 30)
                         }
+                        .padding(.bottom, 20)
                     }
-                }
-            )
-            .sheet(isPresented: $showLibrary) {
-                VStack {
-                    Text("Saved Books")
-                        .font(.title2)
+                )
+            
+                .sheet(isPresented: $showLibrary) {
+                    VStack {
+                        Text("Saved Books")
+                            .font(.title2)
+                            .padding()
+                        
+                        List(wrapper.savedBooks, id: \.self) { title in
+                            Text(title)
+                        }
+                        
+                        Button("Close") {
+                            showLibrary = false
+                        }
                         .padding()
-
-                    List(wrapper.savedBooks, id: \.self) { title in
-                        Text(title)
                     }
-
-                    Button("Close") {
-                        showLibrary = false
-                    }
-                    .padding()
                 }
-            }
+                .onChange(of: wrapper.flashToggle) { _ in
+                    showFlash = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        showFlash = false
+                    }
+                }
+            
+            if showFlash {
+                    Color.black
+                        .edgesIgnoringSafeArea(.all)
+                        .transition(.opacity)
+                        .animation(.easeOut(duration: 0.05), value: showFlash)
+                }
+        }
     }
 }
 
@@ -75,6 +113,15 @@ class CoordinatorWrapper: ObservableObject {
                 savedBooks.append(title)
             }
         }
+    func takeSnapshot() {
+            coordinator?.takeSnapshotAndAddBook()
+        }
+    func triggerFlash() {
+        DispatchQueue.main.async {
+            self.flashToggle.toggle()
+        }
+    }
+    @Published var flashToggle = false
     
 }
 
@@ -98,8 +145,8 @@ struct ARViewContainer: UIViewRepresentable {
         arView.session.run(config)
 
         // Add a tap gesture recognizer to the AR view
-        let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap))
-        arView.addGestureRecognizer(tapGesture)
+//        let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap))
+//        arView.addGestureRecognizer(tapGesture)
 
         context.coordinator.arView = arView
         return arView
@@ -119,8 +166,7 @@ struct ARViewContainer: UIViewRepresentable {
             init(wrapper: CoordinatorWrapper) {
                 self.wrapper = wrapper
             }
-
-        @objc func handleTap() {
+        func takeSnapshotAndAddBook() {
             guard let arView = arView else { return }
 
             let now = Date()
@@ -137,7 +183,8 @@ struct ARViewContainer: UIViewRepresentable {
                 }
 
                 print("Snapshot taken.")
-                self.displayTextInAR("Snapshot captured.")
+//                self.displayTextInAR("Snapshot captured.")
+                self.wrapper?.triggerFlash()
 
                 if let base64String = self.imageToBase64(image: image) {
                     self.sendImageToOpenAI(base64Image: base64String) { bookTitle in
@@ -150,6 +197,7 @@ struct ARViewContainer: UIViewRepresentable {
                             var position = cameraTransform.translation
                             position.z -= 0.4
                             let anchor = AnchorEntity(world: position)
+
                             self.fetchBookInfo(for: bookTitle) { infoText in
                                 DispatchQueue.main.async {
                                     let infoEntity = self.createFloatingInfo(text: infoText)
@@ -159,13 +207,12 @@ struct ARViewContainer: UIViewRepresentable {
                                     anchor.addChild(infoEntity)
                                 }
                             }
+
                             anchor.addChild(bookEntity)
                             anchor.addChild(titleEntity)
-
                             arView.scene.anchors.append(anchor)
                             self.bookAnchor = anchor
-                            self.wrapper!.bookVisible = true// <-- Set visible
-
+                            self.wrapper?.bookVisible = true
                         }
                     }
                 } else {
@@ -173,6 +220,61 @@ struct ARViewContainer: UIViewRepresentable {
                 }
             }
         }
+
+//
+//        @objc func handleTap() {
+//            guard let arView = arView else { return }
+//
+//            let now = Date()
+//            if now.timeIntervalSince(lastTapTime) < cooldownDuration {
+//                print("Cooldown active. Please wait...")
+//                return
+//            }
+//            lastTapTime = now
+//
+//            arView.snapshot(saveToHDR: false) { optionalImage in
+//                guard let image = optionalImage else {
+//                    print("Snapshot failed.")
+//                    return
+//                }
+//
+//                print("Snapshot taken.")
+//                self.displayTextInAR("Snapshot captured.")
+//
+//                if let base64String = self.imageToBase64(image: image) {
+//                    self.sendImageToOpenAI(base64Image: base64String) { bookTitle in
+//                        guard let arView = self.arView else { return }
+//                        DispatchQueue.main.async {
+//                            let bookEntity = self.createBookWithTitle(bookTitle)
+//                            let titleEntity = self.createFloatingTitle(text: bookTitle, for: bookEntity)
+//
+//                            let cameraTransform = arView.cameraTransform
+//                            var position = cameraTransform.translation
+//                            position.z -= 0.4
+//                            let anchor = AnchorEntity(world: position)
+//                            self.fetchBookInfo(for: bookTitle) { infoText in
+//                                DispatchQueue.main.async {
+//                                    let infoEntity = self.createFloatingInfo(text: infoText)
+//                                    infoEntity.position = [titleEntity.position.x,
+//                                                           titleEntity.position.y + 0.09,
+//                                                           titleEntity.position.z]
+//                                    anchor.addChild(infoEntity)
+//                                }
+//                            }
+//                            anchor.addChild(bookEntity)
+//                            anchor.addChild(titleEntity)
+//
+//                            arView.scene.anchors.append(anchor)
+//                            self.bookAnchor = anchor
+//                            self.wrapper!.bookVisible = true// <-- Set visible
+//
+//                        }
+//                    }
+//                } else {
+//                    print("Failed to encode image.")
+//                }
+//            }
+//        }
         
         func animateBookToLibrary() {
             guard let bookAnchor = self.bookAnchor else {
