@@ -838,7 +838,7 @@ struct ARViewContainer: UIViewRepresentable {
                     arView.scene.anchors.remove(oldAnchor)
                 }
             // 🔁 Create a NEW anchor each time (don't reuse)
-            let newAnchor = AnchorEntity(world: [0, 0.5, -0.3])  // This position looks straight ahead at 0.5m
+            let newAnchor = AnchorEntity(world: [0, 0.4, -0.3])  // This position looks straight ahead at 0.5m
             textAnchor = newAnchor  // Update the reference *after* creating the new one
             let textMesh = MeshResource.generateText(
                 text,
