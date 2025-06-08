@@ -65,7 +65,7 @@ struct AutoScreenshotContentView: View {
 class AutoCoordinatorWrapper: ObservableObject {
     @Published var bookVisible: Bool = false
     @Published var savedBooks: [String] = []
-    weak var coordinator: AutoScreenshotARViewContainer.Coordinator? 
+    weak var coordinator: AutoScreenshotARViewContainer.Coordinator?
     var lastBookTitle: String? = nil
 
     func saveLastBook() {
@@ -124,7 +124,7 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
         
         // For snapshots
         var lastOpenAISnapshotTime: TimeInterval = 0
-        let snapshotCooldown: TimeInterval = 15 // seconds
+        let snapshotCooldown: TimeInterval = 10 // seconds
         
         // For display text to screen
         var textAnchor: AnchorEntity?
@@ -139,7 +139,7 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
                 options.baseOptions = baseOptions
                 options.runningMode = .liveStream   // live camera feed mode
                 options.maxResults = 1  // max num of objects to detect per frame
-                options.scoreThreshold = 0.5    // min. confidence threshold
+                options.scoreThreshold = 0.4    // min. confidence threshold
                 
                 options.objectDetectorLiveStreamDelegate = self
                 
@@ -183,16 +183,15 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
             ]
             
-            // Delay detection for 2 seconds to prevent immediate detections, handle in background thread
-            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 2.0) {
-                output.setSampleBufferDelegate(self, queue: DispatchQueue(label: "camera_queue"))
-                
-                if captureSession.canAddOutput(output) {
-                    captureSession.addOutput(output)
-                }
-                
+            output.setSampleBufferDelegate(self, queue: DispatchQueue(label: "camera_queue"))
+            
+            if captureSession.canAddOutput(output) {
+                captureSession.addOutput(output)
+            }
+            
+            DispatchQueue.global(qos: .userInitiated).async {
                 captureSession.startRunning()
-                print("Camera started (after 2s delay)")
+                print("Camera started")
             }
         }
         
@@ -210,8 +209,6 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
                 print("No detection result")
                 return
             }
-            
-//            print("Detection callback at: \(Date().timeIntervalSince1970)")
 
             for detection in result.detections {
                 let categoryNames = detection.categories.map { $0.categoryName ?? "?" }
@@ -219,13 +216,10 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
                 
                 if let category = detection.categories.first,
                    category.categoryName?.lowercased() == "book",
-                   category.score > 0.5 {
+                   category.score > 0.4 {
                     print("Book detected! Confidence: \(category.score)")
                     handleBookDetection() // call function to send snapshot to OpenAI
                 }
-//                else{
-//                    print("No book in detection result (or low confidence)")
-//                }
             }
         }
         
@@ -262,14 +256,21 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
                     self.displayTextInAR("Snapshot captured.")
                     
                     // TEST: restart tracking and camera after snapshot taken
+                    print("Tracking state 2: \(String(describing: arView.session.currentFrame?.camera.trackingState))")
+
                     let config = ARWorldTrackingConfiguration()
                     config.environmentTexturing = .automatic
                     config.planeDetection = [.horizontal]
                     arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
                     
-                    self.captureSession?.stopRunning()
-                    self.captureSession = nil
-                    self.startCameraCapture() // restart camera capture session
+                    print("2 Capture sesion : \(String(describing: self.captureSession))")
+                    print("2 Capture sesion is running?: \(String(describing: self.captureSession?.isRunning))\n")
+                    
+                    if self.captureSession == nil || self.captureSession?.isRunning == false {
+                        self.captureSession?.stopRunning()
+                        self.captureSession = nil
+                        self.startCameraCapture() // restart camera capture session
+                    }
                     
                     DispatchQueue.global(qos: .utility).async {
                         UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil) // save snapshot to photo library
@@ -428,11 +429,6 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
                 print("Restarting AR session due to world tracking failure")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                     self.arView?.session.run(config, options: [.resetTracking, .removeExistingAnchors])
-                    
-                    // TEST: restart camera capture?
-//                    self.captureSession?.stopRunning()
-//                    self.captureSession = nil
-//                    self.startCameraCapture()
                 }
             } else {
                 print("Not restarting — unrecoverable sensor error")
@@ -445,18 +441,24 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
 
         func sessionInterruptionEnded(_ session: ARSession) {
             // Invoked when you toggle out of iOS app
+            
             print("ARSession interruption ended — restarting")
-
+//            print("Tracking state from interruption: \(String(describing: arView?.session.currentFrame?.camera.trackingState))")
+            
             // reset AR tracking
             let config = ARWorldTrackingConfiguration()
             config.environmentTexturing = .automatic
             config.planeDetection = [.horizontal]
             arView?.session.run(config, options: [.resetTracking, .removeExistingAnchors])
             
-            // TEST
-            self.captureSession?.stopRunning()
-            self.captureSession = nil
-            startCameraCapture() // restart camera capture session
+            print("Capture sesion: \(String(describing: captureSession))")
+            print("Capture sesion is running?: \(String(describing: captureSession?.isRunning))\n")
+            
+            if captureSession == nil || captureSession?.isRunning == false {
+                self.captureSession?.stopRunning()
+                self.captureSession = nil
+                startCameraCapture() // restart camera capture session
+            }
         }
         
     }
