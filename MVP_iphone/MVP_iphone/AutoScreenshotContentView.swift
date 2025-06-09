@@ -223,8 +223,9 @@ struct AutoLibraryMapView: View {
     }
     private var clusters: [Cluster] {
         func rounded(_ c: CLLocationCoordinate2D) -> (Double, Double) {
-            ((c.latitude  * 10_000).rounded() / 10_000,
-             (c.longitude * 10_000).rounded() / 10_000)
+            let scale = 1_000.0          // ← was 10_000.0
+            return ((c.latitude  * scale).rounded() / scale,
+                    (c.longitude * scale).rounded() / scale)
         }
         let keyed = Dictionary(grouping: books) { b in
             let (lat, lon) = rounded(b.coordinate)
@@ -556,3 +557,8 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
         }
     }
 }
+
+
+
+
+
