@@ -30,6 +30,22 @@ struct AutoScreenshotContentView: View {
                     }
 
                     Spacer()
+                    
+                        // ❌ Dismiss (left)
+                        if wrapper.bookVisible {
+                            Button(action: { wrapper.dismiss()}) {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 24))
+                                    .foregroundColor(.black)
+                                    .padding(12)
+                                    .background(Color.gray.opacity(0.4))
+                                    .clipShape(Circle())
+                            }
+                        } else {
+                            Spacer().frame(width: 60)   // reserve the same width when hidden
+                        }
+
+                        Spacer()
 
                     // ❤️ Bottom-right
                     if wrapper.bookVisible {
@@ -107,7 +123,7 @@ class AutoCoordinatorWrapper: ObservableObject {
     @Published var savedBooks: [String] = []
     weak var coordinator: AutoScreenshotARViewContainer.Coordinator?
     var lastBookTitle: String? = nil
-
+    func dismiss()        { coordinator?.dismissBookAndInfo()   }
     func saveLastBook() {
         if let title = lastBookTitle, !savedBooks.contains(title) {
             savedBooks.append(title)
@@ -122,7 +138,7 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
         wrapper.coordinator = coordinator
         return coordinator
     }
-
+    
 
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
@@ -157,6 +173,15 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
         }
         
         var textAnchor: AnchorEntity?
+        
+        func dismissBookAndInfo() {
+
+            if let textAnchor = self.textAnchor {
+                arView?.scene.anchors.remove(textAnchor)
+                self.textAnchor = nil
+            }
+            self.wrapper?.bookVisible = false
+        }
 
         func setupObjectDetector() {
             do {
