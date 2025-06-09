@@ -894,9 +894,9 @@ struct LibraryMapView: View {
     private var groups: [BookGroup] {
         // 1. Helper to round a coordinate to 4-dp (≈ 11 m)
         func rounded(_ c: CLLocationCoordinate2D) -> (Double, Double) {
-            let lat = (c.latitude  * 10_000).rounded() / 10_000
-            let lon = (c.longitude * 10_000).rounded() / 10_000
-            return (lat, lon)
+            let scale = 1_000.0          // ← was 10_000.0
+            return ((c.latitude  * scale).rounded() / scale,
+                    (c.longitude * scale).rounded() / scale)
         }
 
         // 2. Group books by that rounded coordinate  (String key = "lat,lon")
@@ -1012,5 +1012,4 @@ struct LibraryMapView: View {
 #Preview {
     ContentView()
 }
-
 
