@@ -32,74 +32,82 @@ struct AutoScreenshotContentView: View {
         ZStack {
             // AR layer
             AutoScreenshotARViewContainer(wrapper: wrapper)
-
-            // ── BOTTOM BAR ───────────────────────────────────────────────
-            VStack {
-                Spacer()
-                HStack {
-                    // 📚 Library (bottom-left)
-                    Button(action: { showLibrary = true }) {
-                        Image(systemName: "books.vertical")
-                            .font(.system(size: 24))
-                            .padding(10)
-                            .background(Color.gray.opacity(0.4))
-                            .clipShape(Circle())
-                    }
-
-                    Spacer()
-
-                    // ❌ Dismiss (left-of-centre)
-                    if wrapper.bookVisible {
-                        Button(action: { wrapper.dismiss() }) {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 24))
-                                .foregroundColor(.black)
-                                .padding(12)
-                                .background(Color.gray.opacity(0.4))
-                                .clipShape(Circle())
+                .edgesIgnoringSafeArea(.all)
+                .overlay(
+                    ZStack {
+                        VStack {
+                            // ── TOP BAR ──────────────────────────────────────────────
+                            HStack {
+                                // 📚 Library (top-left)
+                                Button(action: { showLibrary = true }) {
+                                    Image(systemName: "books.vertical")
+                                        .font(.system(size: 24))
+                                        .padding(10)
+                                        .background(Color.gray.opacity(0.4))
+                                        .clipShape(Circle())
+                                }
+                                
+                                Spacer()
+                                
+                                // 🗺️ Map (top-right)
+                                Button(action: { showMapSheet = true }) {
+                                    Image(systemName: "map")
+                                        .font(.system(size: 24))
+                                        .padding(10)
+                                        .background(Color.gray.opacity(0.4))
+                                        .clipShape(Circle())
+                                }
+                            }
+                            .padding([.top, .horizontal], 20)
+                            
+                            Spacer()
+                            
+                            // ── BOTTOM BAR ───────────────────────────────────────────
+                            ZStack {
+                                // (no camera button in automatic mode)
+                                
+                                HStack {
+                                    // ❌ Dismiss (left)
+                                    if wrapper.bookVisible {
+                                        Button(action: { wrapper.dismiss() }) {
+                                            Image(systemName: "xmark")
+                                                .font(.system(size: 24))
+                                                .foregroundColor(.black)
+                                                .padding(12)
+                                                .background(Color.gray.opacity(0.4))
+                                                .clipShape(Circle())
+                                        }
+                                    } else {
+                                        Spacer().frame(width: 60)
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    // ❤️ Animate/Save (right)
+                                    if wrapper.bookVisible {
+                                        Button(action: {
+                                            wrapper.saveLastBook()
+                                            wrapper.bookVisible = false
+                                            wrapper.animate()}){
+                                            Image(systemName: "heart.fill")
+                                                .font(.system(size: 28))
+                                                .foregroundColor(.red)
+                                                .padding(12)
+                                                .background(Color.gray.opacity(0.4))
+                                                .clipShape(Circle())
+                                        }
+                                    } else {
+                                        Spacer().frame(width: 60)
+                                    }
+                                }
+                                .padding(.horizontal, 30)
+                            }
+                            .padding(.bottom, 25)
                         }
-                    } else {
-                        Spacer().frame(width: 60)   // keep space when hidden
                     }
-
-                    Spacer()
-
-                    // ❤️ Save (bottom-right)
-                    if wrapper.bookVisible {
-                        Button(action: {
-                            wrapper.saveLastBook()
-                            wrapper.bookVisible = false
-                        }) {
-                            Image(systemName: "heart.fill")
-                                .font(.system(size: 28))
-                                .foregroundColor(.red)
-                                .padding(12)
-                                .background(Color.gray.opacity(0.4))
-                                .clipShape(Circle())
-                        }
-                    }
-                }
-                .padding(.bottom, 8)
-            }
+                )
         }
-        // ── TOP-LEFT MAP BUTTON ─────────────────────────────────────────
-        .overlay(
-            VStack {
-                HStack {
-                    Button(action: { showMapSheet = true }) {
-                        Image(systemName: "map")
-                            .font(.system(size: 24))
-                            .padding(10)
-                            .background(Color.gray.opacity(0.4))
-                            .clipShape(Circle())
-                    }
-                    Spacer()
-                }
-                .padding([.top, .leading], 20)
 
-                Spacer()   // push the HStack to the top
-            }
-        )
         // ── SHEETS ─────────────────────────────────────────────────────
         .sheet(isPresented: $showLibrary) {
             VStack {
@@ -201,12 +209,16 @@ final class AutoCoordinatorWrapper: NSObject, ObservableObject, CLLocationManage
         bookVisible = false
         coordinator?.clearTextAnchor()
     }
-    private func save(title: String) {
+    func save(title: String, coverURL: URL? = nil) {
         let coord = currentLocation?.coordinate ?? .init(latitude: 0, longitude: 0)
-        let entry = AutoSavedBook(title: title, coordinate: coord)
+        let entry = AutoSavedBook(title: title, coordinate: coord, coverURL: coverURL)
         guard !savedBooks.contains(where: { $0.title == title }) else { return }
         savedBooks.append(entry)
     }
+    func animate() {
+        coordinator?.animateBookToLibrary()
+    }
+
 }
 struct AutoLibraryMapView: View {
     let books: [AutoSavedBook]
@@ -322,6 +334,7 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
         weak var wrapper: AutoCoordinatorWrapper?
         var bookTitle: String?
         var currentCoverURL: URL?
+        var bookAnchor: AnchorEntity?
         init(wrapper: AutoCoordinatorWrapper) {
             self.wrapper = wrapper
         }
@@ -379,6 +392,75 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
                 print("❌ Detection failed: \(error.localizedDescription)")
             }
         }
+        func animateBookToLibrary() {
+            guard let bookAnchor = self.bookAnchor else {
+                print("No book anchor to animate.")
+                return
+            }
+            let duration: TimeInterval = 2.0
+            let moveDistance: Float = -0.5 // left on X-axis
+            if let textAnchor = self.textAnchor {
+                self.arView?.scene.anchors.remove(textAnchor)
+            }
+            for child in bookAnchor.children {
+                let currentTransform = child.transform
+                var newTransform = currentTransform
+                newTransform.translation.x += moveDistance
+                
+                child.move(to: newTransform, relativeTo: nil, duration: duration, timingFunction: .easeInOut)
+            }
+            if let title = bookTitle {
+                wrapper?.save(title: title, coverURL: currentCoverURL)
+            } // <-- save it
+            // Remove after animation finishes
+            // Remove after animation finishes
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.5) {
+                self.arView?.scene.anchors.remove(bookAnchor)
+                self.bookAnchor = nil
+                self.wrapper?.bookVisible = false // set hidden
+            }
+        }
+        
+        func createBookWithTitle(_ title: String) -> Entity {
+            guard let arView = arView else  { return ModelEntity() }
+            // Remove the previous book anchor if it exists
+            if let oldAnchor = bookAnchor {
+                arView.scene.anchors.remove(oldAnchor)
+            }
+            let bookEntity = try! Entity.loadModel(named: "Book")
+            bookEntity.scale = [0.0007, 0.0007, 0.0007]
+            bookEntity.orientation =
+                simd_quatf(angle: .pi / 3, axis: [1, 0, 0]) *
+                simd_quatf(angle: .pi / 2, axis: [0, 1, 0]) *
+                simd_quatf(angle: -.pi / 8, axis: [0, 0, 1])
+            return bookEntity
+        }
+        
+        func createFloatingCoverImage(from image: UIImage) -> Entity {
+            guard let cgImage = image.cgImage else {
+                print("❌ No CGImage found in UIImage")
+                return ModelEntity()
+            }
+            // Convert UIImage into a RealityKit texture
+            let texture: TextureResource
+            do {
+                texture = try TextureResource.generate(from: cgImage, options: .init(semantic: .color))
+            } catch {
+                print("❌ Failed to create texture: \(error)")
+                return ModelEntity()
+            }
+            // Apply texture to a flat rectangular plane
+            let width: Float = 0.14
+            let height: Float = 0.2
+            let mesh = MeshResource.generatePlane(width: width, height: height)
+            var material = UnlitMaterial()
+            material.baseColor = .texture(texture)
+            let imageEntity = ModelEntity(mesh: mesh, materials: [material])
+            // Position the image above the book
+            imageEntity.position = [0, 0.02, 0.01]
+            imageEntity.orientation = simd_quatf(angle: -.pi / 3.5, axis: [1, 0, 0])
+            return imageEntity
+        }
         func objectDetector(_ objectDetector: ObjectDetector,
                             didFinishDetection result: ObjectDetectorResult?,
                             timestampInMilliseconds: Int,
@@ -410,27 +492,58 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
                 return
             }
             lastOpenAICallTime = now
+
             arView.snapshot(saveToHDR: false) { image in
                 guard let image = image else {
                     print("❌ Snapshot failed")
                     return
                 }
-                
+
                 self.displayTextInAR("Book detected! Please wait...")
+
                 if let base64 = self.imageToBase64(image: image) {
                     self.sendImageToOpenAI(base64Image: base64) { title, summaryText in
                         self.bookTitle = title
                         self.fetchBookInfo(for: title) { infoText, coverURL in
                             DispatchQueue.main.async {
-                                let fullText = "\(summaryText)\n\(infoText)"
-                                self.displayTextInAR(fullText)
+                                guard let arView = self.arView else { return }
+
+                                let bookEntity = self.createBookWithTitle(title)
+                                let cameraTransform = arView.cameraTransform
+                                var position = cameraTransform.translation
+                                position.z -= 0.4
+
+                                let anchor = AnchorEntity(world: position)
+                                anchor.addChild(bookEntity)
+
+                                var titleEntity: Entity?
+                                if let url = coverURL,
+                                   let data = try? Data(contentsOf: url),
+                                   let image = UIImage(data: data) {
+                                    titleEntity = self.createFloatingCoverImage(from: image)
+                                } else {
+//                                    titleEntity = self.createFloatingTitle(text: title, for: bookEntity)
+                                }
+
+                                if let titleEntity = titleEntity {
+                                    anchor.addChild(titleEntity)
+                                }
+
+                                arView.scene.anchors.append(anchor)
+                                self.bookAnchor = anchor
                                 self.currentCoverURL = coverURL
+                                self.wrapper?.bookVisible = true
+
+                                let fullText = "\(summaryText)\n\(infoText)"
+//                                self.speakText(fullText)
+                                self.displayTextInAR(fullText)
                             }
                         }
                     }
                 }
             }
         }
+
         func fetchBookInfo(for title: String, completion: @escaping (String, URL?) -> Void) {
             let query = title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
             let urlString = "https://www.googleapis.com/books/v1/volumes?q=intitle:\(query)&maxResults=1&printType=books"
@@ -577,7 +690,7 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
             if let oldAnchor = textAnchor {
                 arView.scene.anchors.remove(oldAnchor) // remove old text
             }
-            let anchor = AnchorEntity(world: [0, -0.15, -0.5])
+            let anchor = AnchorEntity(world: [0, 0.4, -0.3])
             let textMesh = MeshResource.generateText(
                 text,
                 extrusionDepth: 0.004,
