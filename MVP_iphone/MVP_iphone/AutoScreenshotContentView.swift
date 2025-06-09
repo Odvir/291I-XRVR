@@ -167,6 +167,8 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
         private var lastOpenAICallTime: TimeInterval = 0
         private let openAICooldown: TimeInterval = 10.0 // seconds
         weak var wrapper: AutoCoordinatorWrapper?
+        var bookTitle: String?
+        var currentCoverURL: URL?
 
         init(wrapper: AutoCoordinatorWrapper) {
             self.wrapper = wrapper
@@ -281,13 +283,69 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
                 self.displayTextInAR("Book detected! Please wait...")
 
                 if let base64 = self.imageToBase64(image: image) {
-                    self.sendImageToOpenAI(base64Image: base64) { description in
-                        DispatchQueue.main.async {
-                            self.displayTextInAR(description)
+                    self.sendImageToOpenAI(base64Image: base64) { title, summaryText in
+                        self.bookTitle = title
+                        self.fetchBookInfo(for: title) { infoText, coverURL in
+                            DispatchQueue.main.async {
+                                let fullText = "\(summaryText)\n\(infoText)"
+                                self.displayTextInAR(fullText)
+                                self.currentCoverURL = coverURL
+                            }
                         }
                     }
                 }
             }
+        }
+        
+        func fetchBookInfo(for title: String, completion: @escaping (String, URL?) -> Void) {
+            let query = title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+            let urlString = "https://www.googleapis.com/books/v1/volumes?q=intitle:\(query)&maxResults=1&printType=books"
+            guard let url = URL(string: urlString) else {
+                completion("No extra info available.", nil)
+                return
+            }
+            URLSession.shared.dataTask(with: url) { data, response, error in
+                if let error = error {
+                    print("Books API error: \(error)")
+                    completion("Rating unavailable.", nil)
+                    return
+                }
+                guard let data = data else {
+                    print("Books API returned no data.")
+                    completion("Rating unavailable.", nil)
+                    return
+                }
+                do {
+                    if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let items = json["items"] as? [[String: Any]],
+                       let first = items.first,
+                       let volumeInfo = first["volumeInfo"] as? [String: Any] {
+                        let avg = volumeInfo["averageRating"] as? Double
+                        let count = volumeInfo["ratingsCount"] as? Int ?? 0
+                        var info = ""
+                        if let avg = avg {
+                            info += String(format: "★ %.1f/5", avg)
+                            if count > 0 { info += " (\(count) ratings)" }
+                        } else {
+                            info += "No rating found"
+                        }
+                        // NEW: Extract image URL if available
+                        var imageURL: URL? = nil
+                        if let imageLinks = volumeInfo["imageLinks"] as? [String: Any],
+                           let thumbnail = imageLinks["thumbnail"] as? String {
+                            // Replace HTTP with HTTPS if necessary
+                            let secureURL = thumbnail.replacingOccurrences(of: "http://", with: "https://")
+                            imageURL = URL(string: secureURL)
+                            self.currentCoverURL = imageURL                        }
+                        completion(info, imageURL)
+                    } else {
+                        completion("No extra info available.", nil)
+                    }
+                } catch {
+                    print("Books API JSON error: \(error)")
+                    completion("Rating unavailable.", nil)
+                }
+            }.resume()
         }
 
         func imageToBase64(image: UIImage) -> String? {
@@ -295,7 +353,7 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
             return imageData.base64EncodedString()
         }
 
-        func sendImageToOpenAI(base64Image: String, completion: @escaping (String) -> Void) {
+        func sendImageToOpenAI(base64Image: String, completion: @escaping (_ title: String, _ summary: String) -> Void) {
             guard let apiKey = ProcessInfo.processInfo.environment["API_KEY"] else {
                 print("API_KEY not found in environment variables.")
                 return
@@ -369,11 +427,12 @@ struct AutoScreenshotARViewContainer: UIViewRepresentable {
                         // Extract title (everything before the first colon)
                         if let range = content.range(of: ":") {
                             let title = String(content[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                            let summary = content.trimmingCharacters(in: .whitespacesAndNewlines)
                             self.wrapper?.lastBookTitle = title
                             self.wrapper?.bookVisible = true
-                            completion(title)  // Call the completion handler with the title
+                            completion(title, summary)
                         } else {
-                            completion("Unknown Title")
+                            completion("Unknown Title", content)
                         }
                         
                         DispatchQueue.main.async {
